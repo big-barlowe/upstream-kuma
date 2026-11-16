@@ -559,7 +559,7 @@ export async function renderSnmpBrowser(main, m, { pick = null, navigate = (hash
         h('p', { class: 'muted' }, `Everything ${m.name} reports, read live. Click a name for what it means. + Page adds a value to the monitor’s page, + Card to its card in the Falls (at most ${CARD_MAX}), + Problem to a problem definition, to alert on it.`)),
       h('div', { class: 'actions' },
         uploadButton(reread),
-        h('a', { class: 'btn ghost', href: '#/settings', title: 'MIB library (Settings)' }, 'MIBs'),
+        h('a', { class: 'btn ghost', href: '#/settings/mibs', title: 'MIB library (Settings)' }, 'MIBs'),
         h('a', { class: 'btn', href: `#/monitor/${m.id}` }, 'Back'))),
     b.pickFor ? h('div', { class: 'banner pick-banner' },
       h('div', null,

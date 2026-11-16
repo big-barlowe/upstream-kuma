@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.0
+
+- **Tags and Notifications are now in Settings.** Settings has sections, listed on the left where the monitor list usually is (on a phone, as tabs along the top): General, Notifications, Tags, Import & export and MIB library, so there's room for more as Upstream Kuma grows, and tags and notifications are out of the way of everyday use. The old addresses (`#/tags`, `#/notifications`) still work.
+- **Fixed: zooming far out could crash the page on an iPhone.** After zooming in, the diagram was kept as a finely drawn picture; zooming far out brought all of it into view at that detail, which on an iPhone ran out of memory. On phones and tablets, below 50% zoom the diagram is now drawn at the size it's shown rather than drawn full-size and shrunk (so memory stays about the same at any zoom), it's redrawn at the new zoom as soon as you zoom out, and the source's layers are only as big as the source.
+- **A phone layout.** On a phone the Falls fills the screen: the up, down, blocked and pending counts are across the top in small boxes like the desktop's, and a menu along the bottom has the monitor list, Alerts (with a badge for unresolved problems), the warbling source in the middle to get back to the Falls, Add (a new monitor) and Settings. A funnel at the top left of the Falls filters by tag. The monitor list, the filter and a monitor's details come up as sheets over the map (swipe the details or the filter down to close them); pinch to zoom and drag to move. A traced monitor's name stays put at the top while the rest of its line scrolls like a news ticker.
+- **Add to Home Screen** on an iPhone opens it full screen like an app, around the notch and the home indicator. Use the direct address (`http://<home-assistant-ip>:8099`, with direct access on), since a home-screen app can't sign in through Home Assistant.
+
 ## 0.17.3
 
 - **Fixed: the Falls looked pixelated after zooming in** (until you traced a monitor and went back). The diagram is moved as one picture since 0.17.2, and the browser kept that picture at the zoom it was first drawn at. Now it's drawn again, sharp, a moment after you stop zooming.

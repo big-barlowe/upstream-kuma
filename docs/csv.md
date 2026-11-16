@@ -6,7 +6,7 @@ Upstream Kuma can export every monitor to a CSV file and import monitors from on
 - **Edit in bulk.** Export, change the file in a spreadsheet, and import it again with **Update** mode.
 - **Set up many monitors at once.** Start from the blank template or the example file.
 
-Everything is under **Settings → Import & export monitors**. Exports and imports use exactly the same columns, so an exported file imports as it is.
+Everything is under **Settings → Import & export**. Exports and imports use exactly the same columns, so an exported file imports as it is.
 
 - [Quick start](#quick-start)
 - [File format](#file-format)
@@ -23,7 +23,7 @@ Everything is under **Settings → Import & export monitors**. Exports and impor
 
 **Moving to a new install**
 
-1. On the old install, go to **Settings → Import & export monitors → Export all monitors (CSV)**.
+1. On the old install, go to **Settings → Import & export → Export all monitors (CSV)**.
 2. On the new install, choose that file under **Import**, keep **Add every row as a new monitor**, check the summary, and press **Import**.
 3. Set up your notification channels and rules (**Notifications**) on the new install. They are not exported (channels hold passwords and tokens). Rules pick monitors by tag, and the tags come with the file.
 
@@ -88,7 +88,7 @@ api-2,API,http,Host 2,http://10.0.0.2/health
 
 ## Column reference
 
-These columns apply to every monitor type. The same reference, built from the importer's own definitions, is under **Column reference** on the Settings page.
+These columns apply to every monitor type. The same reference, built from the importer's own definitions, is under **Column reference** in **Settings → Import & export**.
 
 | Column | Values | Default | Notes |
 |---|---|---|---|
@@ -237,7 +237,7 @@ Icons fetched automatically (favicons, Minecraft server icons) are not in the fi
 
 ## Example
 
-This is the **Example file** offered on the Settings page, trimmed to the columns it uses:
+This is the **Example file** offered under **Settings → Import & export**, trimmed to the columns it uses:
 
 ```csv
 name,type,parents,parent_mode,interval,retries,description,icon,tags,url,accepted_codes,keyword,host,port,hostname,record_type,entity_id,expected_state

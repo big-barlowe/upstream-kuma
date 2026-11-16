@@ -513,6 +513,20 @@ body.popout-falls .flow-select { position: static; }
 .flow-focus { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .focus-chip { display: inline-flex; align-items: center; gap: 7px; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 999px; padding: 3px 12px; font-size: 0.85rem; }
 .focus-chip .dot { width: 8px; height: 8px; }
+.filter-icon, .trace-x { display: none; }
+.filter-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+/* a traced monitor's chip: the name, then the rest on one line, which
+   scrolls like a news ticker when it doesn't fit (tickers() in app.js) */
+.trace-chip { flex-wrap: nowrap; }
+/* the name keeps its width (up to 65% of the chip); the ticker takes what's left */
+.chip-name { flex: 0 1 auto; min-width: 0; max-width: 65%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip-ticker { flex: 1 1 0; min-width: 24px; overflow: hidden; white-space: nowrap; }
+.trace-chip:not(:has(.run)) .chip-ticker { flex-basis: auto; }
+.chip-ticker-text { display: inline-flex; }
+.chip-ticker-gap { display: inline-block; width: 36px; }
+.chip-ticker.run { mask-image: linear-gradient(90deg, transparent, #000 10px, #000 calc(100% - 14px), transparent); -webkit-mask-image: linear-gradient(90deg, transparent, #000 10px, #000 calc(100% - 14px), transparent); }
+.chip-ticker.run .chip-ticker-text { padding-left: 6px; animation: ticker var(--dur, 10s) linear infinite; }
+@keyframes ticker { to { transform: translateX(calc(-1 * var(--shift, 0px))); } }
 .falls-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 @container (min-width: 820px) { .falls-body.with-info { grid-template-columns: minmax(0, 1fr) 300px; } }
 .falls-diagram { min-width: 0; }
@@ -1171,3 +1185,189 @@ table.csv-columns { width: 100%; border-collapse: collapse; font-size: 0.82rem; 
 .rule-opt.now { box-shadow: inset 0 -2px 0 var(--up); }
 .reading-where { color: var(--foam); }
 .reading-where-note { color: var(--faint); font-family: var(--font); }
+
+/* ---- phones (body.phone, set from app.js) -------------------------------------
+   The counts at the top, a menu at the bottom, the Falls filling everything
+   between, and the monitor list, the filter and a monitor's details as sheets
+   over it. Bars clear the iPhone's notch and home indicator (safe areas). */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.phone-stats, .tabbar { display: none; }
+body.phone {
+  /* below the status bar, clear of the fade iOS draws under it */
+  --ph-top: calc(env(safe-area-inset-top, 0px) + 74px);
+  --ph-bottom: calc(env(safe-area-inset-bottom, 0px) + 58px);
+  --ph-left: max(12px, env(safe-area-inset-left, 0px));
+  --ph-right: max(12px, env(safe-area-inset-right, 0px));
+  -webkit-tap-highlight-color: transparent;
+}
+body.phone .top, body.phone .side-resize, body.phone #side-pop, body.phone .falls-resize { display: none; }
+body.phone:not(.popout-side) .side { display: none; }
+body.phone .layout { display: block; padding: calc(var(--ph-top) + 12px) var(--ph-right) calc(var(--ph-bottom) + 20px) var(--ph-left); }
+/* under 16px, iOS zooms the page in when a field is focused */
+body.phone input, body.phone select, body.phone textarea { font-size: 16px; }
+
+/* top: the counts */
+body.phone .phone-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: center;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  height: var(--ph-top);
+  padding: calc(env(safe-area-inset-top, 0px) + 22px) var(--ph-right) 0 var(--ph-left);
+  background: linear-gradient(180deg, #06202f, #051b2b);
+  border-bottom: 1px solid var(--border-soft);
+  touch-action: none;
+  gap: 6px;
+  padding-bottom: 8px;
+}
+/* small versions of the desktop's stat cards */
+.pstat { position: relative; overflow: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; height: 100%; min-width: 0; line-height: 1.15; background: var(--panel); border: 1px solid var(--border-soft); border-radius: 10px; }
+.pstat::after { content: ""; position: absolute; inset: auto 0 0 0; height: 2px; background: linear-gradient(90deg, transparent, rgba(56, 189, 248, 0.6), transparent); opacity: 0.5; }
+.pstat b { font-size: 1.25rem; font-weight: 650; font-variant-numeric: tabular-nums; color: var(--muted); }
+.pstat > span { display: flex; align-items: center; gap: 5px; font-size: 0.66rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; }
+.pstat .dot { width: 7px; height: 7px; }
+.pstat.up b { color: #99f6e4; }
+.pstat.down.some b { color: #fca5a5; }
+.pstat.pending.some b { color: #fcd34d; }
+.pstat.blocked.some b { color: var(--text); }
+body.phone .conn { position: fixed; top: var(--ph-top); left: 0; right: 0; z-index: 49; }
+
+/* bottom: the menu, with the source raised in the middle */
+body.phone .tabbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 76px minmax(0, 1fr);
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  height: var(--ph-bottom);
+  padding: 0 max(4px, env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px) max(4px, env(safe-area-inset-left, 0px));
+  background: color-mix(in srgb, var(--panel-solid) 94%, transparent);
+  border-top: 1px solid var(--border-soft);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.tab-group { display: flex; min-width: 0; }
+.tab-group > .tab { flex: 1 1 0; }
+.tab { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 0; padding: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 0.66rem; line-height: 1; text-decoration: none; cursor: pointer; }
+.tab:hover { color: var(--text); text-decoration: none; }
+.tab svg { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.tab > span { white-space: nowrap; }
+.tab[aria-current="page"], .tab[aria-pressed="true"] { color: var(--water); }
+.tab-badge { position: absolute; top: 5px; left: calc(50% + 5px); min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px; background: var(--down); color: #fff; font: 600 0.62rem/17px var(--font); font-style: normal; text-align: center; box-shadow: 0 0 0 2px var(--panel-solid); }
+.tab-falls { align-self: start; justify-self: center; width: 62px; height: 62px; margin-top: -18px; border-radius: 50%; background: radial-gradient(circle at 50% 42%, #0b2c42, #051b2b 72%); border: 1px solid rgba(56, 189, 248, 0.35); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45), 0 0 14px rgba(56, 189, 248, 0.22); }
+.tab-falls[aria-current="page"] { border-color: var(--water); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45), 0 0 20px rgba(56, 189, 248, 0.55); }
+.tab-falls .source-mark { width: 60px; height: 60px; overflow: visible; stroke: none; } /* (not .tab svg's 23px) */
+.source-mark .hole-rim { fill: #153443; }
+.source-mark .hole-water { fill: #03c1f5; }
+.source-mark .hole-core { fill: #72e1f8; }
+
+/* the monitor list, as a sheet between the bars */
+body.phone.popout-side .side {
+  display: flex;
+  position: fixed;
+  inset: var(--ph-top) 0 var(--ph-bottom) 0;
+  z-index: 45;
+  max-height: none;
+  padding: 12px var(--ph-right) 8px var(--ph-left);
+  border: 0;
+  border-radius: 0;
+  background: var(--panel-solid);
+  box-shadow: none;
+  animation: sheet-in 0.2s ease-out;
+}
+@keyframes sheet-in { from { opacity: 0; transform: translateY(14px); } }
+body.phone .tree .row { min-height: 40px; }
+
+/* the Falls fills the screen between the bars */
+body.phone.on-falls { overflow: hidden; }
+body.phone .dashboard > .stat-row, body.phone .dashboard > .card:not(.falls) { display: none; }
+body.phone .falls {
+  position: fixed;
+  inset: var(--ph-top) 0 var(--ph-bottom) 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+body.phone .falls-body { position: relative; flex: 1 1 auto; min-height: 0; display: block; }
+body.phone .falls-diagram { position: absolute; inset: 0; }
+body.phone .flow-map { position: absolute; inset: 0; border: 0; border-radius: 0; background: transparent; }
+body.phone #flow-empty { position: absolute; left: 0; right: 0; top: 25%; z-index: 3; }
+/* the Falls' bar floats over the map: what's traced and filtered, and Select */
+body.phone .falls > .card-head { position: absolute; top: 8px; left: var(--ph-left); right: var(--ph-right); z-index: 6; display: flex; flex-wrap: nowrap; align-items: flex-start; justify-content: space-between; gap: 6px; margin: 0; padding: 0; pointer-events: none; }
+body.phone .falls-title { flex: 1 1 auto; }
+body.phone .falls-tools { flex: none; }
+body.phone .falls-title h2, body.phone .legend, body.phone #falls-pop, body.phone .flow-focus > .muted { display: none; }
+/* the filter is a funnel button; Show all is the trace chip's × */
+body.phone .flow-focus > button.falls-filter-btn:not(.filter-icon), body.phone .filter-chip, body.phone .flow-focus > .btn:not(.filter-icon) { display: none; }
+body.phone .filter-icon { display: inline-grid; place-items: center; flex: none; width: 36px; height: 34px; padding: 0; border-radius: 999px; }
+body.phone .filter-icon.on { color: var(--water); border-color: var(--water); box-shadow: 0 0 10px rgba(56, 189, 248, 0.35); }
+body.phone .trace-x { display: grid; place-items: center; flex: none; width: 24px; height: 24px; }
+body.phone .flow-focus { flex-wrap: nowrap; min-width: 0; }
+body.phone .trace-chip { flex: 0 1 auto; min-width: 0; height: 34px; padding: 0 6px 0 11px; }
+body.phone .falls-title, body.phone .falls-tools { pointer-events: none; min-width: 0; }
+body.phone .flow-focus > *, body.phone .falls-tools > *, body.phone .expr-pop { pointer-events: auto; }
+body.phone .flow-focus { gap: 6px; }
+body.phone .focus-chip, body.phone #select-toggle, body.phone .flow-focus > .btn { font-size: 0.8rem; background: color-mix(in srgb, var(--panel-solid) 84%, transparent); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+body.phone .focus-chip { max-width: 100%; }
+/* zoom is a pinch: the map's controls keep the layout and Fit, bottom right */
+body.phone .map-controls { top: auto; bottom: 10px; right: var(--ph-right); }
+body.phone .map-step, body.phone .map-zoom { display: none; }
+body.phone .map-btn { min-width: 38px; height: 38px; }
+/* a monitor's details, the filter and the selection come up as sheets */
+body.phone .flow-info {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 7;
+  max-height: 62%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 14px var(--ph-right) 16px var(--ph-left);
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 18px 18px 0 0;
+  background: var(--panel-solid);
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.45);
+  animation: sheet-in 0.22s ease-out;
+}
+body.phone .flow-info::before { content: ""; align-self: center; flex: none; width: 40px; height: 4px; margin: -4px 0 0; border-radius: 2px; background: var(--border); }
+body.phone #flow-filter-pop { position: fixed; top: auto; left: 0; right: 0; bottom: var(--ph-bottom); width: auto; max-height: 65%; overflow: auto; overscroll-behavior: contain; z-index: 46; padding: 16px var(--ph-right) 16px var(--ph-left); border-radius: 18px 18px 0 0; animation: sheet-in 0.2s ease-out; }
+/* room for the raised middle button */
+body.phone .flow-info, body.phone #flow-filter-pop { padding-bottom: 30px; }
+body.phone .flow-select { position: absolute; left: var(--ph-left); right: var(--ph-right); bottom: 60px; margin: 0; max-height: 55%; overflow: auto; z-index: 8; }
+
+/* ---- settings sections ----------------------------------------------------------
+   Listed where the monitor list usually is; on phones (where that column is the
+   monitor list's sheet) as a row of tabs above the page. */
+#settings-nav { display: none; }
+body.on-settings:not(.phone) .side > :not(#settings-nav) { display: none; }
+body.on-settings:not(.phone) #settings-nav { display: flex; }
+.settings-nav { flex-direction: column; gap: 2px; }
+.settings-link { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; color: var(--muted); text-decoration: none; }
+.settings-link:hover { color: var(--text); background: rgba(56, 189, 248, 0.06); text-decoration: none; }
+.settings-link.on { color: var(--text); background: rgba(56, 189, 248, 0.14); box-shadow: inset 2px 0 0 var(--water); }
+.settings-link svg { flex: none; width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.settings-link.on svg { color: var(--water); }
+.settings-link-text { display: flex; flex-direction: column; min-width: 0; font-weight: 500; }
+.settings-link-note { font-size: 0.76rem; font-weight: 400; color: var(--faint); }
+.settings-tabs { display: none; }
+body.phone .settings-tabs { display: flex; gap: 6px; margin: 0 calc(-1 * var(--ph-right)) 14px calc(-1 * var(--ph-left)); padding: 0 var(--ph-right) 2px var(--ph-left); overflow-x: auto; scrollbar-width: none; }
+body.phone .settings-tabs::-webkit-scrollbar { display: none; }
+.settings-tabs a { flex: none; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--border-soft); background: var(--panel); color: var(--muted); font-size: 0.86rem; text-decoration: none; white-space: nowrap; }
+.settings-tabs a.on { color: var(--text); border-color: var(--water); background: rgba(56, 189, 248, 0.16); }

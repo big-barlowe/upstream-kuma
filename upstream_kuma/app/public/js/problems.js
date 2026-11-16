@@ -1,4 +1,4 @@
-// Problems: the Problems section of the Notifications page (the built-in
+// Problems: the Problems section of Settings → Notifications (the built-in
 // "Monitor down" and value problems, with ready-made ones to start from),
 // and the Unresolved table on the Alerts page. How a value problem is
 // evaluated lives in src/problems.js.
@@ -265,7 +265,7 @@ function tagScope(box, { value, tags, onChange, count, none = 'No tags picked: e
             });
           }),
           picked.length > 1 ? matchToggle(value.tagMatch, (mode) => onChange({ ...value, tagMatch: mode })) : null)
-        : h('p', { class: 'muted small' }, 'No tags yet. ', h('a', { href: '#/tags' }, 'Make some'), ' to pick monitors by tag.'),
+        : h('p', { class: 'muted small' }, 'No tags yet. ', h('a', { href: '#/settings/tags' }, 'Make some'), ' to pick monitors by tag.'),
       h('div', { class: 'scope-line' },
         h('span', { class: 'muted small' }, test.error ? test.error : any ? count(test.test) : none),
         any ? h('button', { type: 'button', class: 'linkish', onclick: () => onChange({ tagIds: [], tagMatch: 'any', tagExpr: '' }) }, 'Clear') : null,
@@ -714,7 +714,7 @@ export function monitoredData(list, m) {
   return h('section', { class: 'card mon-data' },
     h('div', { class: 'card-head' },
       h('h2', null, 'Monitored data'),
-      h('a', { class: 'muted small', href: '#/notifications' }, 'Problem definitions')),
+      h('a', { class: 'muted small', href: '#/settings/notifications' }, 'Problem definitions')),
     h('p', { class: 'muted small' }, 'What problem definitions read from this monitor on every check (they pick it by its tags).'),
     h('div', { class: 'open-wrap' }, h('table', { class: 'open-table' },
       h('thead', null, h('tr', null, ['Problem definition', 'Data', 'Value now', 'Problem when it', 'State'].map((t) => h('th', null, t)))),
@@ -826,7 +826,7 @@ export async function pickValueDialog({ monitor, entry, sysObjectId, pickId = nu
       } catch {
         // no session storage: start blank
       }
-      navigate('#/notifications');
+      navigate('#/settings/notifications');
       return true;
     }
     const d = defs.find((x) => x.id === target);

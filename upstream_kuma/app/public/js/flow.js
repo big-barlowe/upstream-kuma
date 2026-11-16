@@ -19,7 +19,12 @@ const VIEW_MIN_H = 320;
 const MAP_H = { min: 200, max: 4000 }; // dragged heights
 // Zoomed out below `details`, the small text, tags, foam and ripples are left
 // out (names stay). The water keeps flowing at every zoom.
-const LOD = { details: 0.3 };
+const LOD = { details: 0.3, layer: 0.5 };
+// Phones and tablets: below LOD.layer zoom the diagram's SVGs are made small
+// instead of scaled down (see #show). Safari draws a layer at the screen's
+// resolution whatever its scale, so a full-size diagram scaled down, all of it
+// in view, was over a gigabyte and iOS killed the page.
+const COARSE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
 // Downstream of a traced monitor: each step away is this much smaller.
 const SHRINK = { step: 0.9, min: 0.65 };
 const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
@@ -509,15 +514,26 @@ function warbleFrames(d, { amp, lobes: [k1, k2], dir = 1, frames = 12 }) {
 const STILL = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 let holeFrames = null;
 
+const holeWarble = () => (holeFrames ??= {
+  rim: warbleFrames(HOLE.rim, { amp: 0.07, lobes: [3, 5] }),
+  water: warbleFrames(HOLE.water, { amp: 0.06, lobes: [2, 4], dir: -1 }),
+});
+// SMIL, since CSS can't animate a path's shape everywhere; it's one element
+const warble = (frames, dur) => (STILL ? null : svg('animate', { attributeName: 'd', values: frames, dur, repeatCount: 'indefinite' }));
+
+// The source on its own, warbling, for the phone menu's middle button.
+export function sourceMark() {
+  const f = holeWarble();
+  return svg('svg', { class: 'source-mark', viewBox: '18 20 172 172', 'aria-hidden': 'true' },
+    svg('path', { class: 'hole-rim', d: HOLE.rim }, warble(f.rim, '7s')),
+    svg('path', { class: 'hole-water', d: HOLE.water }, warble(f.water, '5s')),
+    svg('path', { class: 'hole-core', d: HOLE.core }));
+}
+
 function sourceHole(x, y, focused) {
   const [cx, cy] = HOLE.c;
   const s = HOLE.scale;
-  holeFrames ??= {
-    rim: warbleFrames(HOLE.rim, { amp: 0.07, lobes: [3, 5] }),
-    water: warbleFrames(HOLE.water, { amp: 0.06, lobes: [2, 4], dir: -1 }),
-  };
-  // SMIL, since CSS can't animate a path's shape everywhere; it's one element
-  const warble = (frames, dur) => (STILL ? null : svg('animate', { attributeName: 'd', values: frames, dur, repeatCount: 'indefinite' }));
+  const holeFrames = holeWarble();
   const at = { transform: `translate(${x - cx * s} ${y - cy * s}) scale(${s})` };
   // The rim goes under the streams and the water over them, so the streams
   // seem to come out of the water. Both are drawn in small SVGs of their own
@@ -572,9 +588,9 @@ export class FlowView {
     });
     this.controls = h('div', { class: 'map-controls' },
       h('span', { class: 'map-layouts', role: 'group', 'aria-label': 'Layout' }, this.layoutBtns),
-      button('−', 'Zoom out', () => this.#zoomBy(1 / ZOOM.step)),
+      button('−', 'Zoom out', () => this.#zoomBy(1 / ZOOM.step), ' map-step'),
       this.zoomLabel,
-      button('+', 'Zoom in', () => this.#zoomBy(ZOOM.step)),
+      button('+', 'Zoom in', () => this.#zoomBy(ZOOM.step), ' map-step'),
       button(svg('svg', { class: 'map-fit', viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': 'true' },
         svg('path', { d: 'M1.5 5.5v-4h4M10.5 1.5h4v4M14.5 10.5v4h-4M5.5 14.5h-4v-4' })), 'Fit to view', () => this.#fit(true)));
     this.hint = h('div', { class: 'map-hint', 'aria-hidden': 'true' },
@@ -621,6 +637,8 @@ export class FlowView {
     container.addEventListener('pointerup', (e) => this.#up(e));
     container.addEventListener('pointercancel', (e) => this.#up(e));
     container.addEventListener('wheel', (e) => this.#wheel(e), { passive: false });
+    // iOS Safari's own pinch (gesture events) would zoom the page instead
+    for (const t of ['gesturestart', 'gesturechange']) container.addEventListener(t, (e) => e.preventDefault());
     container.addEventListener('click', onMap((e) => {
       if (this.#swallowClick() || !this.svgEl) return;
       if (e.target.closest('.source-hit') && !e.shiftKey && !e.metaKey && !e.ctrlKey && !this.selectMode) this.onSelect(SOURCE);
@@ -663,6 +681,11 @@ export class FlowView {
     const h = this.#height(v.k);
     Object.assign(v, { x: v.x + (this.container.clientWidth - w0) / 2, y: v.y + (h - h0) / 2, h });
     this.#apply(false);
+  }
+
+  // Fit the whole diagram again (the phone menu's middle button).
+  fit() {
+    if (this.svgEl) this.#fit(true);
   }
 
   // 'tree' or 'rings'. The nodes glide to their new places.
@@ -834,19 +857,23 @@ export class FlowView {
     // Streams and cards are two SVGs, so the water's canvas can go between
     // them (under the cards). Both move together (#show).
     this.viewEl = svg('g', { class: 'viewport' }, nodes, hole.hit);
-    this.streamsEl = svg('svg', { class: 'flow-svg flow-streams', width, height, 'aria-hidden': 'true' }, edges);
+    this.streamsEl = svg('svg', { class: 'flow-svg flow-streams', width, height, viewBox: `0 0 ${width} ${height}`, 'aria-hidden': 'true' }, edges);
+    this.size = { width, height };
     if (this.gl) this.gl.key = null; // new streams
     // The diagram is drawn at its own size and moved as a whole (#show), so
     // the browser slides the pixels it already has instead of redrawing
     // every card on every frame of a pan. Pointer events are on the map.
+    this.holeOrigin = [srcX - 100, srcY - 100];
     for (const l of this.holeLayers) {
-      l.setAttribute('width', width);
-      l.setAttribute('height', height);
+      l.setAttribute('width', 200);
+      l.setAttribute('height', 200);
+      l.setAttribute('viewBox', `${srcX - 100} ${srcY - 100} 200 200`);
     }
     const root = svg('svg', {
       class: `flow-svg layout-${this.mode}${focus != null ? ' focusing' : ''}`,
       width,
       height,
+      viewBox: `0 0 ${width} ${height}`,
       role: 'group',
       'aria-label': 'Monitor hierarchy flow diagram. Drag to move around; hold Ctrl or ⌘ and scroll, or pinch, to zoom.',
     },
@@ -855,6 +882,7 @@ export class FlowView {
     this.viewEl);
     this.holeOff = undefined;
     this.rasterK = null;
+    this.small = undefined;
     fill(this.container, this.holeLayers[0], this.streamsEl, this.canvas, root, this.marks, this.holeLayers[1], this.controls, this.hint);
     this.dirty = true;
     this.#startWater();
@@ -953,31 +981,57 @@ export class FlowView {
   // layers are composited (will-change), so a pan only moves pixels.
   #show(p) {
     this.shown = p;
-    const transform = `translate(${p.x}px, ${p.y}px) scale(${p.k})`;
-    for (const el of this.#layers()) el.style.transform = transform;
-    this.#sharpenLater();
+    // Touch devices zoomed far out: the SVGs are made that small (their
+    // viewBox scales the diagram into them) rather than scaled down, so their
+    // layers stay about the screen's size. A pan still only moves them; each
+    // step of a zoom redraws them.
+    const small = COARSE && p.k < LOD.layer;
+    const { width = 0, height = 0 } = this.size ?? {};
+    for (const el of [this.streamsEl, this.svgEl]) {
+      if (!el) continue;
+      el.setAttribute('width', small ? width * p.k : width);
+      el.setAttribute('height', small ? height * p.k : height);
+      el.style.transform = `translate(${p.x}px, ${p.y}px)${small ? '' : ` scale(${p.k})`}`;
+    }
+    // the source's layers are only the source's size, placed where it is
+    const [ox, oy] = this.holeOrigin ?? [0, 0];
+    for (const el of this.holeLayers ?? []) el.style.transform = `translate(${p.x + p.k * ox}px, ${p.y + p.k * oy}px) scale(${p.k})`;
+    if (small !== this.small) {
+      this.small = small;
+      if (!small) this.rasterK = p.k; // a fresh layer, drawn at this zoom
+    }
+    if (!small) this.#sharpenLater();
   }
 
-  // Chrome keeps a composited layer at the scale it was first drawn at, so
-  // zooming in enlarges its pixels. Once a zoom settles well past that scale
-  // (in, or far enough out that it's drawing far more than it shows), the
-  // layers are drawn again at the current one: dropping will-change for a
-  // frame does that. (Headless Chrome redraws by itself; a real window
-  // doesn't.) It repaints the diagram once, so not on every zoom step.
+  // A composited layer keeps the scale it was first drawn at. Zooming in, that
+  // enlarges its pixels: once the zoom settles past it, the layers are drawn
+  // again at the current one. Zooming out, it costs memory: the layer comes
+  // into view at the old, finer scale, and far enough out that's hundreds of
+  // megabytes (an iPhone kills the page), so it's redrawn straight away, even
+  // mid-pinch. Dropping will-change for a frame redraws it. (Headless Chrome
+  // redraws by itself; a real window doesn't.)
   #sharpenLater() {
     const k = this.shown?.k;
     if (!k) return;
     this.rasterK ??= k; // new layers start at the current zoom
     clearTimeout(this.sharpTimer);
-    if (k <= this.rasterK * 1.1 && k >= this.rasterK * 0.5) return;
+    if (k < this.rasterK * 0.6) return this.#sharpen();
+    if (k <= this.rasterK * 1.1) return;
     this.sharpTimer = setTimeout(() => {
       if (this.glide || this.gesture) return this.#sharpenLater();
-      this.rasterK = this.shown.k;
-      const els = this.#layers();
-      for (const el of els) el.style.willChange = 'auto';
-      // two frames: the first is drawn without it, the second puts it back
-      requestAnimationFrame(() => requestAnimationFrame(() => els.forEach((el) => (el.style.willChange = ''))));
+      this.#sharpen();
     }, 250);
+  }
+
+  #sharpen() {
+    this.rasterK = this.shown.k;
+    const els = this.#layers();
+    for (const el of els) el.style.willChange = 'auto';
+    // two frames: the first is drawn without it, the second puts it back
+    cancelAnimationFrame(this.sharpFrame);
+    this.sharpFrame = requestAnimationFrame(() => {
+      this.sharpFrame = requestAnimationFrame(() => els.forEach((el) => (el.style.willChange = '')));
+    });
   }
 
   #layers() {

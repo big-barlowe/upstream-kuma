@@ -318,7 +318,7 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
     },
     autoHelp: () => {
       const t = tagIcon();
-      if (t) return `Uses the icon of its ${t.name} tag. Change it on the Tags page.`;
+      if (t) return `Uses the icon of its ${t.name} tag. Change it under Settings → Tags.`;
       return draft.type === 'http'
         ? 'Uses the website’s favicon (unless one of its tags has an icon). Upstream Kuma fetches it after you save, and re-checks it weekly.'
         : draft.type === 'minecraft' ? 'Uses the server’s own icon (the one in the multiplayer list), fetched after you save.'
@@ -406,7 +406,7 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
       draft.childIds.length && added.length ? h('label', { class: 'check' },
         h('input', { type: 'checkbox', checked: tagsDownstream, onchange: (e) => { tagsDownstream = e.target.checked; } }),
         h('span', null, `Also add ${added.join(', ')} to everything downstream of this monitor`)) : null,
-      h('small', null, 'Tags group monitors across the hierarchy (by site, owner…). Filter by them in the sidebar, and pick which alerts go where in Notifications.'));
+      h('small', null, 'Tags group monitors across the hierarchy (by site, owner…). Filter by them in the sidebar, and pick which alerts go where in Settings → Notifications.'));
     renderAlertRoute();
   };
 
@@ -420,7 +420,7 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
         ? h('p', { class: 'alert-route-to' }, 'When it is down, the alert goes to',
           to.map((c) => h('span', { class: `rule-chip${c.active ? '' : ' inactive'}`, title: c.active ? null : 'Inactive: nothing is sent' }, c.name)))
         : h('p', { class: 'muted' }, channels.length ? 'No notification rule matches this monitor, so its alerts are not sent anywhere.' : 'There are no notification channels yet, so alerts are not sent anywhere.'),
-      h('p', { class: 'help' }, 'Which alerts go where is set by tag under ', h('a', { href: '#/notifications' }, 'Notifications'),
+      h('p', { class: 'help' }, 'Which alerts go where is set by tag under ', h('a', { href: '#/settings/notifications' }, 'Notifications'),
         '. Alerts are sent for the monitor that is actually down (the top of the affected branch).'));
   };
 

@@ -1,4 +1,4 @@
-// The Notifications page: rules ("Alert <channels> when <problems> for
+// Settings → Notifications: rules ("Alert <channels> when <problems> for
 // <tags>"), then the channels, then the problems. A rule is edited as a
 // draft and saved with its Save button. Matching itself is in rules.js,
 // shared with the server.
@@ -233,7 +233,7 @@ export async function renderNotifications(main, { state, editing: addingChannel 
               });
             }),
             picked.length > 1 ? matchToggle(rule.tagMatch, (mode) => change({ tagMatch: mode })) : null)
-          : h('p', { class: 'muted small' }, 'No tags yet. ', h('a', { href: '#/tags' }, 'Make some'), ' to send different alerts to different places.'),
+          : h('p', { class: 'muted small' }, 'No tags yet. ', h('a', { href: '#/settings/tags' }, 'Make some'), ' to send different alerts to different places.'),
         h('div', { class: 'rule-pop-foot' },
           h('span', { class: 'muted small' }, test.error ? test.error : any ? `${matchCount(test.test)} match.` : 'No tags picked: every monitor.'),
           any ? h('button', { type: 'button', class: 'linkish', onclick: () => change({ tagIds: [], tagExpr: '' }) }, 'All monitors') : null,

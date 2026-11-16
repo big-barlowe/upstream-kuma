@@ -1,5 +1,5 @@
 import { api, h, svg, toast, modal, confirmDialog, storage, store, STATUS_LABEL, BEAT_STATUS, TYPE_LABEL, fmtTime, fmtAgo, fmtPct, fmtMs, fill } from './util.js';
-import { FlowView, lineage, SOURCE } from './flow.js';
+import { FlowView, lineage, SOURCE, sourceMark } from './flow.js';
 import { iconEl } from './icons.js';
 import { heartbeatBar, responseChart } from './chart.js';
 import { renderMonitorForm, iconChooser } from './forms.js';
@@ -232,6 +232,15 @@ function renderSummary() {
     : c.pending ? `${c.pending} pending` : state.monitors.length ? 'All flowing' : 'No monitors yet';
   fill(el, h('span', { class: `dot ${tone}` }), text);
   el.className = `summary ${tone}`;
+  // Phones: the counts across the top, and unresolved problems on Alerts.
+  fill($('#phone-stats'), [['up', 'Up'], ['down', 'Down'], ['blocked', 'Blocked'], ['pending', 'Pending']].map(([k, label]) =>
+    h('div', { class: `pstat ${k}${c[k] ? ' some' : ''}` },
+      h('b', null, c[k]),
+      h('span', null, h('span', { class: `dot ${k}` }), label))));
+  const open = state.open?.length ?? 0;
+  const badge = $('#tab-alerts .tab-badge');
+  badge.hidden = !open;
+  badge.textContent = open > 99 ? '99+' : String(open);
   document.title = c.down ? `(${c.down}) Upstream Kuma` : 'Upstream Kuma';
 }
 
@@ -428,7 +437,7 @@ function tagFilterControls(box, where) {
         h('button', { type: 'button', class: 'expr-text', title: 'Edit the filter', onclick: () => openExprEditor(where) }, ui.tagExpr),
         h('button', { type: 'button', class: 'chip-x', 'aria-label': 'Clear the filter', title: 'Clear the filter', onclick: () => setTagExpr('') }, '×')),
       expr?.error ? h('span', { class: 'expr-error' }, expr.error) : null,
-      h('a', { class: 'linkish', href: '#/tags' }, 'Manage'));
+      h('a', { class: 'linkish', href: '#/settings/tags' }, 'Manage'));
   }
   const on = ui.tagFilter.size > 0;
   fill(box,
@@ -450,7 +459,7 @@ function tagFilterControls(box, where) {
     on && state.tags.length > 1 ? matchToggle(ui.tagMatch, (mode) => setTagFilter(ui.tagFilter, mode)) : null,
     on ? h('button', { class: 'linkish', onclick: () => setTagFilter([]) }, 'Clear') : null,
     h('button', { class: 'linkish', title: 'Combine tags with and, or and not', onclick: () => openExprEditor(where) }, 'Advanced'),
-    h('a', { class: 'linkish', href: '#/tags' }, 'Manage'));
+    h('a', { class: 'linkish', href: '#/settings/tags' }, 'Manage'));
 }
 
 // Opens the editor in the sidebar or in the Falls' filter panel. Only one is
@@ -863,7 +872,94 @@ function setPopout(which) {
   document.body.classList.toggle('popout-falls', which === 'falls');
   paintPopButton($('#side-pop'), 'side', 'monitor list');
   paintPopButton($('#falls-pop'), 'falls', 'Falls');
-  flow?.setExpanded(which === 'falls');
+  flow?.setExpanded(which === 'falls' || ui.phone);
+  $('#tab-list').setAttribute('aria-pressed', String(which === 'side'));
+}
+
+// A sheet on a phone (a monitor's details, the filter) follows a finger down
+// and goes when it's pulled far or flicked; otherwise it springs back. Only
+// from the top of its scroll, so scrolling inside it still works.
+function swipeAway(el, close) {
+  let drag = null;
+  el.addEventListener('touchstart', (e) => {
+    drag = ui.phone && e.touches.length === 1 && el.scrollTop <= 0
+      ? { y0: e.touches[0].clientY, t0: performance.now(), dy: 0, on: null }
+      : null;
+  }, { passive: true });
+  el.addEventListener('touchmove', (e) => {
+    if (!drag) return;
+    drag.dy = e.touches[0].clientY - drag.y0;
+    // the first move decides: up scrolls the sheet, down pulls it
+    if (drag.on === null && Math.abs(drag.dy) > 3) drag.on = drag.dy > 0;
+    if (!drag.on) {
+      if (drag.on === false) drag = null;
+      return;
+    }
+    e.preventDefault();
+    el.style.transition = 'none';
+    el.style.transform = `translateY(${Math.max(0, drag.dy)}px)`;
+  }, { passive: false });
+  const end = () => {
+    if (!drag?.on) {
+      drag = null;
+      return;
+    }
+    const { dy, t0 } = drag;
+    drag = null;
+    const flick = dy > 30 && dy / (performance.now() - t0) > 0.5;
+    el.style.transition = 'transform 0.2s ease-out';
+    if (dy > Math.min(120, el.offsetHeight / 3) || flick) {
+      el.style.transform = 'translateY(105%)';
+      setTimeout(() => {
+        el.style.transition = '';
+        el.style.transform = '';
+        close();
+      }, 190);
+    } else {
+      el.style.transform = '';
+      setTimeout(() => (el.style.transition = ''), 210);
+    }
+  };
+  el.addEventListener('touchend', end);
+  el.addEventListener('touchcancel', end);
+}
+
+// ---- phones -------------------------------------------------------------------
+// Narrow screens (and phones on their side) get their own layout (body.phone in
+// style.css): the counts at the top, a menu at the bottom, the Falls filling
+// everything between, and the monitor list, the filter and a monitor's details
+// as sheets over it.
+
+const PHONE = matchMedia('(max-width: 700px), (max-height: 500px) and (pointer: coarse)');
+
+function applyPhone() {
+  ui.phone = PHONE.matches;
+  document.body.classList.toggle('phone', ui.phone);
+  if (ui.popout) setPopout(null);
+  else flow?.setExpanded(ui.phone);
+}
+
+function initPhone() {
+  $('#tab-falls').append(sourceMark(), h('span', { class: 'sr-only' }, 'The Falls'));
+  // The middle button: to the Falls, and once there, back to everything.
+  $('#tab-falls').addEventListener('click', (e) => {
+    if (ui.route?.name !== 'dashboard') return; // the link takes you there
+    e.preventDefault();
+    if (ui.popout) return setPopout(null);
+    if (ui.fallsFilter) return closeFallsFilter();
+    if (ui.focus != null || ui.info != null) return setFocus(null, null);
+    flow?.fit();
+  });
+  $('#tab-list').addEventListener('click', () => {
+    if (ui.fallsFilter) closeFallsFilter();
+    setPopout(ui.popout === 'side' ? null : 'side');
+  });
+  // Pinching the bars would zoom the whole page.
+  for (const bar of ['#tabbar', '#phone-stats']) {
+    for (const t of ['gesturestart', 'gesturechange']) $(bar).addEventListener(t, (e) => e.preventDefault());
+  }
+  PHONE.addEventListener('change', applyPhone);
+  applyPhone();
 }
 
 // ---- dashboard --------------------------------------------------------------
@@ -889,6 +985,7 @@ async function renderDashboard(isUpdate = false) {
         store('fallsLayout', mode);
       },
     });
+    if (ui.phone) flow.setExpanded(true);
     fill(main, h('div', { class: 'dashboard' },
       h('div', { class: 'stat-row', id: 'dash-stats' }),
       h('section', { class: 'card falls' },
@@ -925,6 +1022,8 @@ async function renderDashboard(isUpdate = false) {
         h('div', { class: 'card-head' }, h('h2', null, 'Recent events')),
         h('div', { id: 'dash-events' }))));
     paintPopButton($('#falls-pop'), 'falls', 'Falls');
+    swipeAway($('#flow-info'), () => setFocus(ui.focus, null));
+    swipeAway($('#flow-filter-pop'), closeFallsFilter);
   }
   const c = counts();
   fill($('#dash-stats'),
@@ -1067,30 +1166,58 @@ function renderFocusBar(vis) {
       'aria-expanded': String(ui.fallsFilter),
       onclick: toggleEditor,
     }, '+ Filter') : null;
+  // Phones: a funnel instead of the chip or "+ Filter" (lit while one is on).
+  const funnel = state.tags.length ? h('button', {
+    type: 'button',
+    class: `btn small falls-filter-btn filter-icon${vis ? ' on' : ''}`,
+    title: vis ? 'Edit the filter' : 'Show only monitors with certain tags',
+    'aria-label': vis ? `Filter: ${vis.match.size} of ${state.monitors.length} monitors` : 'Filter',
+    'aria-expanded': String(ui.fallsFilter),
+    onclick: toggleEditor,
+  }, svg('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' }, svg('path', { d: 'M4 5h16l-6 7.5V18l-4 2v-7.5z' }))) : null;
+  // What's traced: the name, then the rest on one line, scrolling like a news
+  // ticker when it doesn't fit (tickers(), after it's on screen). On phones
+  // the chip's × replaces Show all.
+  const traceChip = (dot, name, rest) => h('span', { class: 'focus-chip trace-chip' },
+    h('span', { class: `dot ${dot}` }),
+    h('span', { class: 'chip-name' }, name),
+    h('span', { class: 'chip-ticker muted' }, h('span', { class: 'chip-ticker-text' }, rest)),
+    h('button', { class: 'chip-x trace-x', 'aria-label': 'Show everything', title: 'Show everything', onclick: () => setFocus(null, null) }, '×'));
+  let parts;
   if (ui.focus === SOURCE) {
     const n = vis ? vis.match.size : state.monitors.length;
-    fill($('#flow-focus'), filterChip,
-      h('span', { class: 'focus-chip' },
-        h('span', { class: 'dot source' }),
-        h('span', null, 'Upstream Kuma'),
-        h('span', { class: 'muted' }, ` · ${n === 1 ? '1 monitor' : `${n} monitors`}, smaller the further downstream`)),
-      showAll);
-    return;
+    parts = [funnel, filterChip, traceChip('source', 'Upstream Kuma', `· ${n === 1 ? '1 monitor' : `${n} monitors`}, smaller the further downstream`), showAll];
+  } else if (!f) {
+    parts = [funnel, filterChip, state.monitors.length && !vis ? h('span', { class: 'muted small' }, 'Click a monitor to trace what it depends on') : null];
+  } else {
+    const rel = lineage(state.monitors, f.id);
+    const matching = vis ? [...rel.down.keys()].filter((id) => vis.match.has(id)).length : 0;
+    parts = [funnel, filterChip, traceChip(f.status, f.name, `· ${rel.up.size} upstream · ${rel.down.size} downstream`
+      + (vis && rel.down.size ? ` (${matching} match the filter)` : '')), showAll];
   }
-  if (!f) {
-    fill($('#flow-focus'), filterChip, state.monitors.length && !vis ? h('span', { class: 'muted small' }, 'Click a monitor to trace what it depends on') : null);
-    return;
+  // Redrawn only when it changed: the poll would restart the ticker.
+  const host = $('#flow-focus');
+  const html = h('div', null, parts).innerHTML;
+  if (html === host.dataset.html) return;
+  fill(host, parts);
+  host.dataset.html = html;
+  tickers(host);
+}
+
+// A ticker whose text doesn't fit scrolls: the text twice, moved left by one
+// copy and around again, at a reading pace.
+function tickers(root) {
+  for (const t of root.querySelectorAll('.chip-ticker')) {
+    const text = t.firstChild;
+    const runs = !matchMedia('(prefers-reduced-motion: reduce)').matches && text.scrollWidth > t.clientWidth + 1;
+    t.classList.toggle('run', runs);
+    if (!runs) continue;
+    const gap = 36;
+    const w = text.scrollWidth;
+    text.append(h('span', { class: 'chip-ticker-gap', 'aria-hidden': 'true' }), h('span', { 'aria-hidden': 'true' }, text.firstChild.textContent));
+    t.style.setProperty('--shift', `${w + gap}px`);
+    t.style.setProperty('--dur', `${((w + gap) / 32).toFixed(1)}s`);
   }
-  const rel = lineage(state.monitors, f.id);
-  const matching = vis ? [...rel.down.keys()].filter((id) => vis.match.has(id)).length : 0;
-  fill($('#flow-focus'),
-    filterChip,
-    h('span', { class: 'focus-chip' },
-      h('span', { class: `dot ${f.status}` }),
-      h('span', null, f.name),
-      h('span', { class: 'muted' }, ` · ${rel.up.size} upstream · ${rel.down.size} downstream`
-        + (vis && rel.down.size ? ` (${matching} match the filter)` : ''))),
-    showAll);
 }
 
 function renderInfo() {
@@ -1377,14 +1504,14 @@ async function renderAlerts() {
 
 // ---- tags -------------------------------------------------------------------
 
-async function renderTags() {
+async function renderTags(box) {
   const [tags, rules] = await Promise.all([api('tags'), api('rules')]);
   // Notification rules that pick monitors by this tag, by pill or by name in an expression.
   const rulesUsing = (t) => rules.filter((r) => r.tagIds.includes(t.id)
     || (r.tagExpr && parseTagExpr(r.tagExpr, tags.filter((x) => x.id !== t.id))?.error)).length;
   const reload = async () => {
     await refresh();
-    if (ui.route?.name === 'tags') renderTags();
+    if (ui.route?.name === 'settings' && ui.route.section === 'tags' && box.isConnected) renderTags(box);
   };
   const editor = (t) => {
     const save = async (patch) => {
@@ -1436,7 +1563,7 @@ async function renderTags() {
             }),
         }, 'Delete')));
   };
-  fill($('#main'), h('div', { class: 'stack' },
+  fill(box, h('div', { class: 'stack' },
     h('div', { class: 'page-head' },
       h('h1', null, 'Tags'),
       h('button', { class: 'btn primary', onclick: () => newTagDialog(tags, reload) }, '+ New tag'),
@@ -1481,11 +1608,40 @@ function tagIconDialog(t, onSaved) {
 
 // ---- settings ---------------------------------------------------------------
 
-async function renderSettings() {
+// ---- settings ------------------------------------------------------------------
+// Settings has sections, listed where the monitor list usually is (on phones,
+// as tabs above the page). New kinds of settings get a section here.
+
+const SETTINGS = [
+  { id: 'general', label: 'General', note: 'History, version', icon: 'M4 7h9M17 7h3M4 17h3M11 17h9M15 5v4M9 15v4', render: (box) => renderGeneral(box) },
+  { id: 'notifications', label: 'Notifications', note: 'Rules, channels, problem definitions', icon: 'M21 3 3 10.5l7 3 3 7.5zM10 13.5 21 3', render: (box) => renderNotifications(box, { state }) },
+  { id: 'tags', label: 'Tags', note: 'Names, colours, icons', icon: 'M3.5 12.5V4h8.5l8.5 8.5-8 8zM8 7v3M6.5 8.5h3', render: (box) => renderTags(box) },
+  { id: 'import', label: 'Import & export', note: 'Monitors as a CSV file', icon: 'M12 3v11M7.5 9.5 12 14l4.5-4.5M4 15v4.5h16V15', render: (box) => fill(box, h('div', { class: 'stack' }, h('div', { class: 'page-head' }, h('h1', null, 'Import & export')), csvCard())) },
+  { id: 'mibs', label: 'MIB library', note: 'Names for SNMP values', icon: 'M6 4h10.5A2.5 2.5 0 0 1 19 6.5V20H8.5A2.5 2.5 0 0 1 6 17.5zM6 17.5A2.5 2.5 0 0 1 8.5 15H19', render: (box) => fill(box, h('div', { class: 'stack' }, h('div', { class: 'page-head' }, h('h1', null, 'MIB library')), mibLibraryCard())) },
+];
+const settingsHref = (id) => (id === 'general' ? '#/settings' : `#/settings/${id}`);
+const settingsIcon = (d) => svg('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' }, svg('path', { d }));
+
+async function renderSettings(section) {
+  const cur = SETTINGS.find((s) => s.id === section) ?? SETTINGS[0];
+  fill($('#settings-nav'), SETTINGS.map((s) => h('a', { class: `settings-link${s === cur ? ' on' : ''}`, href: settingsHref(s.id), 'aria-current': s === cur ? 'page' : null },
+    settingsIcon(s.icon),
+    h('span', { class: 'settings-link-text' }, h('span', null, s.label), h('span', { class: 'settings-link-note' }, s.note)))));
+  const body = h('div', { class: 'settings-body' });
+  fill($('#main'), h('div', { class: 'settings-page' },
+    // phones: the sections as tabs (the left column is the monitor list's)
+    h('nav', { class: 'settings-tabs', 'aria-label': 'Settings sections' },
+      SETTINGS.map((s) => h('a', { class: s === cur ? 'on' : null, href: settingsHref(s.id), 'aria-current': s === cur ? 'page' : null }, s.label))),
+    body));
+  $('.settings-tabs .on')?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  await cur.render(body);
+}
+
+async function renderGeneral(box) {
   const [settings, info] = await Promise.all([api('settings'), api('info')]);
   const retention = h('input', { id: 's-ret', type: 'number', min: 1, value: settings.retentionDays });
-  fill($('#main'), h('div', { class: 'stack' },
-    h('div', { class: 'page-head' }, h('h1', null, 'Settings')),
+  fill(box, h('div', { class: 'stack' },
+    h('div', { class: 'page-head' }, h('h1', null, 'General')),
     h('form', {
       class: 'card form',
       onsubmit: async (e) => {
@@ -1501,8 +1657,6 @@ async function renderSettings() {
     h('h3', null, 'Data'),
     h('div', { class: 'field' }, h('label', { for: 's-ret' }, 'Keep heartbeat history for (days)'), retention),
     h('div', { class: 'form-actions' }, h('button', { class: 'btn primary', type: 'submit' }, 'Save'))),
-    csvCard(),
-    mibLibraryCard(),
     h('div', { class: 'card' },
       h('h3', null, 'About'),
       h('p', null, `Upstream Kuma ${info.version}${info.addon ? ' · running as a Home Assistant add-on' : ' · standalone'}`),
@@ -1643,21 +1797,30 @@ function parseRoute() {
   if (parts[0] === 'monitor') return { name: 'monitor', id: Number(parts[1]) };
   if (parts[0] === 'add') return { name: 'add', parent: params.get('parent') ? Number(params.get('parent')) : null };
   if (parts[0] === 'alerts') return { name: 'alerts' };
-  if (parts[0] === 'notifications') return { name: 'notifications' };
-  if (parts[0] === 'settings') return { name: 'settings' };
-  if (parts[0] === 'tags') return { name: 'tags' };
+  if (parts[0] === 'settings') return { name: 'settings', section: parts[1] || 'general' };
   const num = (k) => (params.get(k) ? Number(params.get(k)) : null);
   return { name: 'dashboard', focus: params.get('focus') === SOURCE ? SOURCE : num('focus'), info: num('info') };
 }
 
+// Pages that moved into Settings (bookmarks, old links).
+const MOVED = { '#/tags': '#/settings/tags', '#/notifications': '#/settings/notifications' };
+
 async function route() {
+  const moved = MOVED[location.hash.split('?')[0]];
+  if (moved) return location.replace(moved);
   if (ui.popout) setPopout(null);
   ui.fallsFilter = false;
   if (ui.exprOpen === 'falls') ui.exprOpen = false;
   ui.route = parseRoute();
   const r = ui.route;
   document.querySelectorAll('.nav a').forEach((a) => a.classList.toggle('on', a.dataset.route === (['monitor', 'edit', 'add', 'snmp'].includes(r.name) ? 'dashboard' : r.name)));
-  document.body.classList.toggle('show-tree', r.name === 'dashboard');
+  document.body.classList.toggle('show-tree', r.name === 'dashboard' || r.name === 'settings');
+  document.body.classList.toggle('on-settings', r.name === 'settings');
+  document.body.classList.toggle('on-falls', r.name === 'dashboard');
+  for (const t of document.querySelectorAll('.tabbar [data-route]')) {
+    if (t.dataset.route === r.name) t.setAttribute('aria-current', 'page');
+    else t.removeAttribute('aria-current');
+  }
   renderTree();
   window.scrollTo({ top: 0 });
   if (r.name === 'dashboard') {
@@ -1671,9 +1834,7 @@ async function route() {
     else if (r.name === 'edit') await renderMonitorForm($('#main'), { state, id: r.id, navigate: go });
     else if (r.name === 'add') await renderMonitorForm($('#main'), { state, presetParent: r.parent, navigate: go });
     else if (r.name === 'alerts') await renderAlerts();
-    else if (r.name === 'notifications') await renderNotifications($('#main'), { state });
-    else if (r.name === 'settings') await renderSettings();
-    else if (r.name === 'tags') await renderTags();
+    else if (r.name === 'settings') await renderSettings(r.section);
   } catch (err) {
     fill($('#main'), h('div', { class: 'card' }, h('p', null, `Something went wrong: ${err.message}`)));
   }
@@ -1684,6 +1845,7 @@ async function route() {
 $('#side-pop').addEventListener('click', () => setPopout(ui.popout === 'side' ? null : 'side'));
 initSideResize();
 setPopout(null);
+initPhone();
 $('#flow-toggle').addEventListener('click', () => {
   ui.flatList = !ui.flatList;
   store('flatList', ui.flatList);

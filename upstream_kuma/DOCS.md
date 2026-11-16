@@ -63,6 +63,20 @@ It works like a map:
 - **Click a monitor in the list** and the Falls traces it with its details panel open, as if you'd clicked it there; its row stays highlighted. While you're on a monitor's full page, a click opens that monitor's full page instead.
 - **Select monitors** to tag or move several at once: shift-click (or ctrl/⌘-click) them, or hold <kbd>Shift</kbd> and drag a box around them. <kbd>Alt</kbd>/<kbd>⌥</kbd>-drag removes from the selection instead. On a touch screen, tap **Select** first; one finger then draws the box and two fingers move and zoom. The selection is shared with the monitor list. See [Tags](#tags) and [Arranging monitors](#arranging-monitors).
 
+## On a phone
+
+On a phone (or any window up to 700px wide), the page changes shape so the Falls gets the whole screen:
+
+- **At the top:** how many monitors are up, down, blocked and pending.
+- **At the bottom, a menu:** **Monitors** (the monitor list, with search and tags, as a sheet over the Falls; tap a monitor to trace it), **Alerts** (with the number of unresolved problems), the **source** in the middle (back to the Falls; once there, it leaves a trace, then fits everything in view), **Add** (a new monitor) and **Settings**.
+- **The Falls fills the screen** between the two. Pinch to zoom and drag to move around; tap a monitor to trace it, and its expand button for its details, which come up as a sheet (swipe it down to close it). The funnel at the top left filters by tag; it lights up while a filter is on. A traced monitor's name shows at the top; the rest of its line scrolls when it doesn't fit, and its × shows everything again. The layout and Fit buttons are at the bottom right.
+
+**Add it to your home screen** (Safari → Share → *Add to Home Screen*) and it opens full screen like an app, with no browser bars. That works with the address you reach it on directly, for example `http://<home-assistant-ip>:8099` with direct access turned on (see [Add-on options](#add-on-options)). A home-screen app can't sign in to Home Assistant, so the ingress address only works inside the Home Assistant app.
+
+## Settings
+
+The **Settings** page has sections, listed on the left (on a phone, as tabs along the top): **General** (how long to keep heartbeat history, and the version), **Notifications** (rules, channels and problem definitions), **Tags**, **Import & export** (monitors as a CSV file) and **MIB library**. Keeping them here, away from the monitor list, means tags and notifications aren't changed by accident.
+
 ## Tags
 
 Tags are coloured labels for grouping monitors across the hierarchy, for example by site, room or owner. They show as small pills along the bottom of each monitor in the Falls and as coloured dots in the monitor list.
@@ -83,8 +97,8 @@ Tags are coloured labels for grouping monitors across the hierarchy, for example
 - **From the Falls:** any filter in use also shows next to **The Falls** title, with how many monitors match. Click it (or **+ Filter** when there is none) for the same controls as the list: the tag pills with **Any**/**All**, and **Advanced** for a filter expression.
 - **Tag one monitor:** use the Tags field in its settings, or **+ Add tags** in its details panel in the Falls. When you add a tag to a monitor that has dependents, you can also add it to everything downstream (handy for tagging a whole site).
 - **Tag many:** select monitors in the Falls or the list (see above). The selection bar shows every tag: ✓ means all selected monitors have it (click to remove it), `2/5` means some do and `+` means none do (click to add it). Tick **Include downstream** to apply to everything below the selected monitors as well. It starts unticked for every new selection.
-- **Manage:** the **Tags** page lets you create, rename, recolour and delete tags. Deleting a tag only removes the label; monitors are not affected.
-- **Default icon:** on the **Tags** page, **+ Icon** gives a tag an icon (built-in, emoji, image URL or upload). Every monitor with that tag whose icon is set to *Automatic* shows it, e.g. a switch icon for everything tagged *Switch*. See [Icons](#icons).
+- **Manage:** **Settings → Tags** lets you create, rename, recolour and delete tags. Deleting a tag only removes the label; monitors are not affected.
+- **Default icon:** under **Settings → Tags**, **+ Icon** gives a tag an icon (built-in, emoji, image URL or upload). Every monitor with that tag whose icon is set to *Automatic* shows it, e.g. a switch icon for everything tagged *Switch*. See [Icons](#icons).
 
 ## Icons
 
@@ -103,7 +117,7 @@ Favicons and image URLs are downloaded by the add-on and stored in its database,
 
 ## Notifications
 
-The **Notifications** page has three parts: notification rules, channels and problem definitions.
+**Settings → Notifications** has three parts: notification rules, channels and problem definitions.
 
 **Notification rules** decide who hears about what. They're listed as a table, one rule per row, which reads like a sentence: *Alert* [channels] *when* [problems] *for* [tags]. A cell too long for its column fades out at the edge; hover it to see everything. **+ Add rule** starts a new one, and the pencil at the end of a row opens that rule (the bin deletes it): click a cell to change it, then **Save** (or **Add**, for a new rule). Nothing changes until you save, and **×** drops the edits.
 
@@ -189,13 +203,13 @@ The UI is served through Home Assistant ingress (sidebar → **Upstream Kuma**),
 
 ## Import and export (CSV)
 
-**Settings → Import & export monitors** exports every monitor to a CSV file and imports monitors from one. Use it to move to a new install, to edit many monitors at once in a spreadsheet, or to set up a batch of monitors from the blank template or the example file.
+**Settings → Import & export** exports every monitor to a CSV file and imports monitors from one. Use it to move to a new install, to edit many monitors at once in a spreadsheet, or to set up a batch of monitors from the blank template or the example file.
 
 - Exports and imports use the same columns, so an export imports as it is. The hierarchy, settings, tags and icons come along. Notification channels and rules don't (channels hold secrets): set them up on the new install. Rules pick monitors by tag, so they work again once they exist.
 - When a name already exists, you choose: add a second monitor, update the existing one, or skip the row.
 - Choosing a file only checks it and shows what would change. Nothing is saved until you press **Import**, and a file with any error imports nothing.
 
-The Settings page has a column reference. The [full guide](https://github.com/big-barlowe/upstream-kuma/blob/main/docs/csv.md) covers every column and value, with examples.
+That page has a column reference. The [full guide](https://github.com/big-barlowe/upstream-kuma/blob/main/docs/csv.md) covers every column and value, with examples.
 
 ## Data
 
