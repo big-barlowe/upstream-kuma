@@ -64,6 +64,10 @@ test('validates icon specs', () => {
   assert.equal(validateIconSpec('url:https://cdn.example/x.png'), 'url:https://cdn.example/x.png');
   assert.throws(() => validateIconSpec('url:javascript:alert(1)'), /http/);
   assert.throws(() => validateIconSpec('builtin:<script>'), /Unknown/);
+  // a built-in glyph can have a colour
+  assert.equal(validateIconSpec('builtin:bolt:#FACC15'), 'builtin:bolt:#facc15');
+  assert.throws(() => validateIconSpec('builtin:bolt:yellow'), /Unknown/);
+  assert.throws(() => validateIconSpec('builtin:bolt:#facc15;x'), /Unknown/);
 });
 
 test('HTTP monitors get the favicon from the page, falling back to the home page', async () => {
@@ -153,12 +157,15 @@ test('a monitor left on automatic takes its first tag’s icon', async () => {
   for (const id of [nas, sw, own]) store.setMonitorTags(id, [b, a]);
   await sync();
 
-  // Tags are tried in name order; the monitor's own icon wins, and the tag's
+  // Tags are tried in order; the monitor's own icon wins, and the tag's
   // icon wins over the automatic favicon.
   assert.deepEqual(describe(sw), { kind: 'builtin', name: 'switch' });
   assert.deepEqual(describe(nas), { kind: 'builtin', name: 'switch' });
   assert.deepEqual(describe(own), { kind: 'emoji', value: '🔌' });
   assert.equal(requests.length, 0);
+  store.updateTag(a, { name: 'A switch', color: '#60a5fa', icon: 'builtin:switch:#facc15' });
+  await sync();
+  assert.deepEqual(describe(sw), { kind: 'builtin', name: 'switch', color: '#facc15' });
 
   // A tag image URL is fetched and cached like a monitor's own.
   store.updateTag(a, { name: 'A switch', color: '#60a5fa', icon: '' });
@@ -180,4 +187,23 @@ test('a monitor left on automatic takes its first tag’s icon', async () => {
   assert.equal(describe(sw), null);
   assert.equal(describe(nas).kind, 'image');
   assert.throws(() => validateIconSpec('tag:1@2'), /Unknown icon/);
+});
+
+test('an image icon can be drawn bigger or smaller', async () => {
+  const { store, icons, add, sync } = setup({ 'https://cdn.example/logo.png': { body: PNG, type: 'image/png' } });
+  const id = add({ name: 'School', type: 'group', icon: 'url:https://cdn.example/logo.png', iconSize: 130 });
+  await sync();
+  const d = icons.describe(store.getMonitor(id));
+  assert.equal(d.kind, 'image');
+  assert.equal(d.size, 1.3);
+  store.updateMonitor(id, { iconSize: 100 });
+  assert.equal(icons.describe(store.getMonitor(id)).size, undefined);
+  // only images are sized
+  store.updateMonitor(id, { icon: 'builtin:home', iconSize: 150 });
+  assert.deepEqual(icons.describe(store.getMonitor(id)), { kind: 'builtin', name: 'home' });
+  const { normalizeMonitor } = await import('../src/validate.js');
+  const base = store.getMonitor(id);
+  assert.equal(normalizeMonitor({ iconSize: 999 }, base).iconSize, 200);
+  assert.equal(normalizeMonitor({ iconSize: 10 }, base).iconSize, 50);
+  assert.equal(normalizeMonitor({}, base).iconSize, 150);
 });

@@ -206,6 +206,16 @@ export const MIGRATIONS = [
   ALTER TABLE alerts ADD COLUMN problem_id INTEGER;
   ALTER TABLE alerts ADD COLUMN severity TEXT;
   `,
+  // v9: tags have an order (Settings → Tags → Edit), which decides whose icon
+  // a monitor with several tags gets. Existing tags keep their name order.
+  `
+  ALTER TABLE tags ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
+  UPDATE tags SET position = 1 + (SELECT COUNT(*) FROM tags o WHERE o.name COLLATE NOCASE < tags.name COLLATE NOCASE);
+  `,
+  // v10: how big a monitor's image icon is drawn, in percent of the usual size.
+  `
+  ALTER TABLE monitors ADD COLUMN icon_size INTEGER NOT NULL DEFAULT 100;
+  `,
 ];
 
 const TAG_COLS = 'id, name, color, icon, icon_updated_at AS iconV';
@@ -226,6 +236,7 @@ const MONITOR_FIELDS = {
   active: 'active',
   description: 'description',
   icon: 'icon',
+  iconSize: 'icon_size',
 };
 
 function rowToMonitor(r) {
@@ -243,6 +254,7 @@ function rowToMonitor(r) {
     active: Boolean(r.active),
     description: r.description,
     icon: r.icon,
+    iconSize: r.icon_size,
     pushToken: r.push_token,
     createdAt: r.created_at,
   };
@@ -338,12 +350,12 @@ export class Store {
     const pushToken = m.type === 'push' ? crypto.randomBytes(12).toString('hex') : null;
     const res = this.q(
       `INSERT INTO monitors (name, type, config, interval, retries, retry_interval, timeout,
-         resend_interval, parent_mode, active, description, icon, push_token, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         resend_interval, parent_mode, active, description, icon, icon_size, push_token, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       m.name, m.type, JSON.stringify(m.config ?? {}), m.interval, m.retries, m.retryInterval,
       m.timeout, m.resendInterval, m.parentMode, m.active ? 1 : 0, m.description ?? '',
-      m.icon ?? '', pushToken, Date.now()
+      m.icon ?? '', m.iconSize ?? 100, pushToken, Date.now()
     );
     return Number(res.lastInsertRowid);
   }
@@ -466,7 +478,7 @@ export class Store {
   // ---- tags ---------------------------------------------------------------
 
   listTags() {
-    return this.q(`SELECT ${TAG_COLS} FROM tags ORDER BY name COLLATE NOCASE`).all().map((t) => ({ ...t }));
+    return this.q(`SELECT ${TAG_COLS} FROM tags ORDER BY position, name COLLATE NOCASE`).all().map((t) => ({ ...t }));
   }
 
   getTag(id) {
@@ -480,7 +492,14 @@ export class Store {
   }
 
   createTag(t) {
-    return Number(this.q('INSERT INTO tags (name, color, icon) VALUES (?, ?, ?)').run(t.name, t.color, t.icon ?? '').lastInsertRowid);
+    return Number(this.q(`INSERT INTO tags (name, color, icon, position)
+      VALUES (?, ?, ?, (SELECT COALESCE(MAX(position), 0) + 1 FROM tags))`).run(t.name, t.color, t.icon ?? '').lastInsertRowid);
+  }
+
+  // Tags in `ids` come first, in that order; any others keep theirs after them.
+  orderTags(ids) {
+    const rest = this.listTags().map((t) => t.id).filter((id) => !ids.includes(id));
+    [...ids, ...rest].forEach((id, i) => this.q('UPDATE tags SET position = ? WHERE id = ?').run(i + 1, id));
   }
 
   // An uploaded image is dropped once the icon is no longer 'upload'.
@@ -503,12 +522,12 @@ export class Store {
     this.q('DELETE FROM tags WHERE id = ?').run(id);
   }
 
-  // monitor id -> [tag ids], in tag name order
+  // monitor id -> [tag ids], in tag order
   monitorTagMap() {
     const out = new Map();
     const rows = this.q(
       `SELECT mt.monitor_id AS monitorId, mt.tag_id AS tagId FROM monitor_tags mt
-       JOIN tags t ON t.id = mt.tag_id ORDER BY t.name COLLATE NOCASE`
+       JOIN tags t ON t.id = mt.tag_id ORDER BY t.position, t.name COLLATE NOCASE`
     ).all();
     for (const r of rows) {
       if (!out.has(r.monitorId)) out.set(r.monitorId, []);

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.19.0
+
+- **Groups are round in the Falls**, showing just their icon, big: a logo fills a light disc, ringed in the group's status colour. Hover a group (or Tab to it) to see its name in a label under it; a traced group keeps its label. Groups usually stand for a place, a site or a building, so they now stand out as the points where things branch. In the tree, a row with a group in it is as tall as the group.
+- **Image icons can be resized**, from 50% to 200%: a slider under a monitor's image icon (URL, upload, or its automatic favicon), with a preview of how it sits in a group's circle and on a card. Make a logo fill the circle, or give one with no margin some room. It's in the CSV as `icon_size`.
+- **Built-in icons can have a colour**, for monitors and for tags: pick one under the icons, e.g. a yellow bolt for a *UPS* tag. Leave it on the first swatch for the usual light blue.
+- **Tags have an order.** **Settings → Tags → Edit order**: drag the tags, or use the arrows. When a monitor has several tags with icons, the one highest in the order gives it its icon (before, the first in alphabetical order did). Existing tags start in alphabetical order; new ones go to the end.
+- **The browser tab's icon** is just the node now. The home-screen icon is unchanged.
+
 ## 0.18.0
 
 - **Tags and Notifications are now in Settings.** Settings has sections, listed on the left where the monitor list usually is (on a phone, as tabs along the top): General, Notifications, Tags, Import & export and MIB library, so there's room for more as Upstream Kuma grows, and tags and notifications are out of the way of everyday use. The old addresses (`#/tags`, `#/notifications`) still work.

@@ -1,6 +1,6 @@
 import { api, h, toast, TYPE_LABEL, fill } from './util.js';
 import { GLYPHS, iconEl, glyphPreview } from './icons.js';
-import { tagPill, newTagDialog, tagIconView } from './tags.js';
+import { tagPill, newTagDialog, tagIconView, colorPicker } from './tags.js';
 import { matchRules } from './rules.js';
 
 const TYPE_FIELDS = {
@@ -121,33 +121,77 @@ async function toIconDataUrl(file) {
 // descriptor), and autoPreview()/autoHelp() describe the 'auto' choice.
 // spec() is what to save, data() a newly chosen upload as a data URL, and
 // problem() says what is missing before it can be saved.
-export function iconChooser({ id, label = 'Icon', spec = '', modes, current = null, autoPreview = () => null, autoHelp = () => '' }) {
+// With `size` (percent), an image icon gets a size slider and a preview of
+// how it sits in a group's circle.
+export function iconChooser({ id, label = 'Icon', spec = '', modes, current = null, autoPreview = () => null, autoHelp = () => '', size = null }) {
   const el = h('div', { class: 'field icon-field' });
   // Remember each mode's value so flipping between modes loses nothing.
   let mode = iconMode(spec);
   if (!modes.some(([k]) => k === mode)) mode = modes[0][0];
-  const memo = { builtin: 'server', emoji: '', url: '' };
+  const memo = { builtin: 'server', color: '', emoji: '', url: '' };
   if (['builtin', 'emoji', 'url'].includes(mode)) memo[mode] = spec.slice(mode.length + 1);
+  if (mode === 'builtin') [memo.builtin, memo.color = ''] = memo.builtin.split(':');
   let upload = null;
+  let sizePct = size ?? 100;
 
+  // The image being shown, if it is one: its src.
+  const imageSrc = () => {
+    if (mode === 'url') return memo.url || null;
+    if (mode === 'upload') return upload ?? (current?.kind === 'image' ? current.src : null);
+    if (mode === 'auto') {
+      const a = autoPreview();
+      return a?.kind === 'image' ? a.src : null;
+    }
+    return null;
+  };
   const preview = () => {
-    if (mode === 'builtin') return iconEl({ kind: 'builtin', name: memo.builtin }, 30);
+    if (mode === 'builtin') return iconEl({ kind: 'builtin', name: memo.builtin, color: memo.color || undefined }, 30);
     if (mode === 'emoji') return memo.emoji ? iconEl({ kind: 'emoji', value: memo.emoji }, 30) : null;
-    if (mode === 'url') return memo.url ? iconEl({ kind: 'image', src: memo.url }, 30) : null;
-    if (mode === 'upload') return upload ? iconEl({ kind: 'image', src: upload }, 30) : current ? iconEl(current, 30) : null;
+    const src = imageSrc();
+    if (src) return iconEl({ kind: 'image', src, size: size == null ? undefined : sizePct / 100 }, 30);
     if (mode === 'auto') return iconEl(autoPreview(), 30);
     return null;
+  };
+  // A group's circle and a card's badge, as the Falls draws them.
+  const sizer = () => {
+    const src = imageSrc();
+    if (size == null || !src) return null;
+    const disc = (cls) => h('span', { class: `icon-disc ${cls}`, 'aria-hidden': 'true' },
+      h('img', { src, alt: '', style: { transform: `scale(${sizePct / 100})` } }));
+    const discs = h('div', { class: 'icon-discs', title: 'How it looks in the Falls: as a group, and on a card' }, disc('group'), disc('badge'));
+    const out = h('output', { class: 'icon-size-val', for: `${id}-size` }, `${sizePct}%`);
+    const set = (v) => {
+      sizePct = v;
+      out.textContent = `${v}%`;
+      for (const img of discs.querySelectorAll('img')) img.style.transform = `scale(${v / 100})`;
+      const p = el.querySelector('.icon-preview img');
+      if (p) p.style.transform = `scale(${v / 100})`;
+    };
+    return h('div', { class: 'icon-size' },
+      discs,
+      h('div', { class: 'icon-size-controls' },
+        h('label', { for: `${id}-size` }, 'Size'),
+        h('input', { id: `${id}-size`, type: 'range', min: 50, max: 200, step: 5, value: sizePct, oninput: (e) => set(Number(e.target.value)) }),
+        out,
+        h('button', { type: 'button', class: 'btn small ghost', onclick: (e) => {
+          set(100);
+          e.target.closest('.icon-size').querySelector('input').value = 100;
+        } }, 'Reset')));
   };
 
   const render = () => {
     const previewBox = h('div', { class: 'icon-preview', title: 'Preview' }, preview() ?? h('span', { class: 'muted' }, '—'));
-    const refresh = () => fill(previewBox, preview() ?? h('span', { class: 'muted' }, '—'));
+    const sizerBox = h('div', null, sizer());
+    const refresh = () => {
+      fill(previewBox, preview() ?? h('span', { class: 'muted' }, '—'));
+      fill(sizerBox, sizer());
+    };
     let controls = null;
     let help = null;
     if (mode === 'auto') {
       help = autoHelp();
     } else if (mode === 'builtin') {
-      controls = h('div', { class: 'glyph-grid', role: 'listbox', 'aria-label': 'Built-in icons' },
+      controls = [h('div', { class: 'glyph-grid', role: 'listbox', 'aria-label': 'Built-in icons', style: memo.color ? { color: memo.color } : null },
         Object.keys(GLYPHS).map((name) => h('button', {
           type: 'button',
           class: `glyph-pick${memo.builtin === name ? ' on' : ''}`,
@@ -158,7 +202,13 @@ export function iconChooser({ id, label = 'Icon', spec = '', modes, current = nu
             memo.builtin = name;
             render();
           },
-        }, glyphPreview(name, 20))));
+        }, glyphPreview(name, 20)))),
+      h('div', { class: 'glyph-color' },
+        h('span', { class: 'muted small' }, 'Colour'),
+        colorPicker(memo.color, (c) => {
+          memo.color = c;
+          render();
+        }, 'Icon colour', { none: 'Usual colour' }))];
     } else if (mode === 'emoji') {
       const input = h('input', {
         id: `${id}-emoji`,
@@ -226,6 +276,7 @@ export function iconChooser({ id, label = 'Icon', spec = '', modes, current = nu
             },
           }, modes.map(([k, text]) => h('option', { value: k, selected: mode === k }, text))),
           controls)),
+      sizerBox,
       help ? h('small', null, help) : null);
   };
   render();
@@ -233,8 +284,14 @@ export function iconChooser({ id, label = 'Icon', spec = '', modes, current = nu
   return {
     el,
     render,
-    spec: () => (mode === 'auto' ? '' : ['none', 'upload'].includes(mode) ? mode : memo[mode] ? `${mode}:${memo[mode]}` : ''),
+    spec: () => {
+      if (mode === 'auto') return '';
+      if (mode === 'none' || mode === 'upload') return mode;
+      if (mode === 'builtin') return `builtin:${memo.builtin}${memo.color ? `:${memo.color}` : ''}`;
+      return memo[mode] ? `${mode}:${memo[mode]}` : '';
+    },
     data: () => (mode === 'upload' ? upload : null),
+    size: () => sizePct,
     problem: () => {
       if (mode === 'emoji' && !memo.emoji) return 'Enter an emoji for the icon, or pick another option';
       if (mode === 'url' && !memo.url) return 'Enter an image URL for the icon, or pick another option';
@@ -307,6 +364,7 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
     id: 'f-icon',
     spec: draft.icon,
     modes: ICON_MODES,
+    size: draft.iconSize ?? 100,
     current: existing?.icon === 'upload' ? live : null,
     autoPreview: () => {
       const t = tagIcon();
@@ -521,6 +579,7 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
     const iconProblem = icon.problem();
     if (iconProblem) return toast(iconProblem, 'error');
     draft.icon = icon.spec();
+    draft.iconSize = icon.size();
     if (icon.data()) draft.iconData = icon.data();
     else delete draft.iconData;
     draft.tagsDownstream = tagsDownstream && addedTags().length > 0;

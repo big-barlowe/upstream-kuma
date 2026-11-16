@@ -475,7 +475,7 @@ body.popout-falls .flow-select { position: static; }
 .flow-svg .node .dot { fill: var(--blocked); }
 .flow-svg .node-badge .ring { fill: #0a2238; stroke: var(--blocked); stroke-width: 2; transition: stroke 0.2s; }
 .flow-svg .node-badge.kind-image .ring { fill: #e8f2fb; }
-.flow-svg .icon-glyph { fill: none; stroke: var(--foam); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.flow-svg .icon-glyph { color: var(--foam); fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .flow-svg .node.up .dot { fill: var(--up); }
 .flow-svg .node.up .ring { stroke: var(--up); }
 .flow-svg .node.down .ring { stroke: var(--down); }
@@ -495,7 +495,16 @@ body.popout-falls .flow-select { position: static; }
 .flow-svg .node.blocked .dot { fill: none; stroke: var(--blocked); stroke-width: 2; }
 .flow-svg .node.paused .dot { fill: var(--paused); }
 .flow-svg .node.paused .name { fill: var(--muted); }
-.flow-svg .node.type-group .pool { fill: rgba(3, 105, 161, 0.18); stroke-dasharray: 2 3; }
+.flow-svg .node.type-group .pool { fill: #0d2a42; stroke-width: 2.5; }
+.flow-svg .node.type-group .pool.pool-image { fill: #e8f2fb; }
+.flow-svg .node.type-group.up .pool { stroke: var(--up); }
+.flow-svg .node.type-group.pending .pool { stroke: var(--pending); }
+.flow-svg .node.type-group.paused .pool { stroke: var(--paused); }
+.flow-svg .node.type-group.blocked .group-badge, .flow-svg .node.type-group.paused .group-badge { opacity: 0.5; }
+.flow-svg .group-label { opacity: 0; pointer-events: none; transition: opacity 0.12s; }
+.flow-svg .group-label.show, .flow-svg .group-label.pinned { opacity: 1; }
+.flow-svg .group-label rect { fill: var(--panel-solid); stroke: rgba(125, 211, 252, 0.55); stroke-width: 1; }
+.flow-svg .group-label text { fill: var(--text); font-size: 12.5px; font-weight: 600; }
 .flow-svg .node.focused .pool { stroke-width: 2.5; filter: url(#glow-box); }
 .flow-svg .node.focused:not(.down) .pool { stroke: var(--foam); }
 
@@ -643,11 +652,24 @@ button.tag-pill:hover { border-color: var(--tag); background: color-mix(in srgb,
 .swatch { width: 22px; height: 22px; border-radius: 50%; background: var(--tag); border: 0; padding: 0; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25); }
 .swatch:hover { transform: scale(1.1); }
 .swatch.on { outline: 2px solid var(--text); outline-offset: 2px; }
+.swatch-none { background: linear-gradient(135deg, transparent 45%, var(--muted) 45% 55%, transparent 55%), var(--panel-2); box-shadow: inset 0 0 0 1px var(--border); }
+.glyph-color { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.glyph-grid .glyph-pick { color: inherit; }
+.glyph-grid { color: var(--foam); }
 .swatch-custom { width: 30px; height: 24px; padding: 0 2px; border-radius: 6px; cursor: pointer; }
 
 .tag-list { padding-block: 4px; }
 .tag-item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px 18px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border-soft); }
 .tag-item:last-child { border-bottom: 0; }
+.page-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.tag-order { list-style: none; margin: 0; padding-block: 4px; }
+.tag-order-item { display: flex; align-items: center; gap: 12px; padding: 8px 4px; border-bottom: 1px solid var(--border-soft); cursor: grab; user-select: none; }
+.tag-order-item:last-child { border-bottom: 0; }
+.tag-order-item.dragging { opacity: 0.45; }
+.tag-order-item .tag-pill { max-width: 50%; }
+.tag-order-grip { color: var(--muted); font-size: 16px; line-height: 1; }
+.tag-order-n { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 1.5em; text-align: right; }
+.tag-order-arrows { margin-left: auto; display: flex; gap: 4px; }
 .tag-item-look { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
 .tag-icon-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 84px; }
 .tag-item-name { display: flex; gap: 10px; align-items: center; min-width: 0; }
@@ -1371,3 +1393,17 @@ body.phone .settings-tabs { display: flex; gap: 6px; margin: 0 calc(-1 * var(--p
 body.phone .settings-tabs::-webkit-scrollbar { display: none; }
 .settings-tabs a { flex: none; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--border-soft); background: var(--panel); color: var(--muted); font-size: 0.86rem; text-decoration: none; white-space: nowrap; }
 .settings-tabs a.on { color: var(--text); border-color: var(--water); background: rgba(56, 189, 248, 0.16); }
+
+/* Icon size (monitor form): the slider, and the icon as the Falls draws it,
+   in a group's circle (the image is 64/92 of it) and a card's badge (18/30). */
+.icon-size { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-top: 10px; }
+.icon-discs { display: flex; align-items: center; gap: 12px; }
+.icon-disc { display: grid; place-items: center; border-radius: 50%; overflow: hidden; background: #e8f2fb; flex: none; }
+.icon-disc.group { width: 64px; height: 64px; box-shadow: 0 0 0 2.5px var(--up); }
+.icon-disc.group img { width: 69.6%; height: 69.6%; }
+.icon-disc.badge { width: 30px; height: 30px; box-shadow: 0 0 0 2px var(--up); }
+.icon-disc.badge img { width: 60%; height: 60%; }
+.icon-disc img { object-fit: contain; display: block; }
+.icon-size-controls { display: flex; align-items: center; gap: 8px; flex: 1 1 220px; }
+.icon-size-controls input[type=range] { flex: 1; min-width: 100px; }
+.icon-size-val { min-width: 3.5em; font-variant-numeric: tabular-nums; color: var(--muted); }

@@ -1,7 +1,8 @@
 import { h, svg } from './util.js';
 
 // Built-in glyphs: 24x24, stroked with currentColor. Keys are stored on the
-// monitor as `builtin:<key>`, so never rename one.
+// monitor as `builtin:<key>` (or `builtin:<key>:#rrggbb` for a colour), so
+// never rename one.
 export const GLYPHS = {
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.4 2.6 3.6 5.6 3.6 9s-1.2 6.4-3.6 9c-2.4-2.6-3.6-5.6-3.6-9S9.6 5.6 12 3z"/>',
   cloud: '<path d="M7 18.5h10.5a4 4 0 0 0 .5-8 6 6 0 0 0-11.6-1.4A4.6 4.6 0 0 0 7 18.5z"/>',
@@ -38,36 +39,42 @@ function glyph(name, attrs) {
 }
 
 // HTML icon for lists and headings. `icon` is the descriptor from the state
-// snapshot ({ kind: 'image' | 'builtin' | 'emoji', … }) or null.
+// snapshot ({ kind: 'image' | 'builtin' | 'emoji', … }) or null. An image may
+// have a `size` (a factor: the monitor's icon size).
 export function iconEl(icon, size = 18) {
   if (!icon) return null;
   const style = { width: `${size}px`, height: `${size}px` };
   if (icon.kind === 'image') {
     return h('span', { class: 'mon-icon img', style, 'aria-hidden': 'true' },
-      h('img', { src: icon.src, alt: '', loading: 'lazy', onerror: (e) => e.target.parentNode.classList.add('broken') }));
+      h('img', { src: icon.src, alt: '', loading: 'lazy', style: icon.size ? { transform: `scale(${icon.size})` } : null, onerror: (e) => e.target.parentNode.classList.add('broken') }));
   }
   if (icon.kind === 'emoji') {
     return h('span', { class: 'mon-icon emoji', style: { ...style, fontSize: `${Math.round(size * 0.85)}px` }, 'aria-hidden': 'true' }, icon.value);
   }
   if (icon.kind === 'builtin' && GLYPHS[icon.name]) {
-    return h('span', { class: 'mon-icon glyph', style }, glyph(icon.name, { width: size, height: size }));
+    return h('span', { class: 'mon-icon glyph', style: icon.color ? { ...style, color: icon.color } : style }, glyph(icon.name, { width: size, height: size }));
   }
   return null;
 }
 
-// The same, as SVG content centred on (cx, cy) for the falls diagram.
-export function iconSvg(icon, cx, cy, size) {
+// The same, as SVG content centred on (cx, cy) for the falls diagram. An
+// image drawn bigger than usual is cut to `clip` (a clipPath's id), if given.
+export function iconSvg(icon, cx, cy, size, clip) {
   if (!icon) return null;
+  if (icon.kind === 'image') {
+    const s = size * (icon.size ?? 1);
+    return svg('image', {
+      class: 'icon-img', href: icon.src, x: cx - s / 2, y: cy - s / 2, width: s, height: s, preserveAspectRatio: 'xMidYMid meet',
+      'clip-path': clip && icon.size > 1 ? `url(#${clip})` : null,
+    });
+  }
   const x = cx - size / 2;
   const y = cy - size / 2;
-  if (icon.kind === 'image') {
-    return svg('image', { class: 'icon-img', href: icon.src, x, y, width: size, height: size, preserveAspectRatio: 'xMidYMid meet' });
-  }
   if (icon.kind === 'emoji') {
     return svg('text', { class: 'icon-emoji', x: cx, y: cy, 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': size * 0.85 }, icon.value);
   }
   if (icon.kind === 'builtin' && GLYPHS[icon.name]) {
-    return glyph(icon.name, { class: 'icon-glyph', x, y, width: size, height: size });
+    return glyph(icon.name, { class: 'icon-glyph', x, y, width: size, height: size, style: icon.color ? `color: ${icon.color}` : null });
   }
   return null;
 }

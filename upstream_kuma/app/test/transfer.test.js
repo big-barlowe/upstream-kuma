@@ -31,7 +31,7 @@ function snapshot(store) {
     type: m.type,
     // unticked checkboxes are absent or false, depending on how it was saved
     config: Object.fromEntries(Object.entries(m.config).filter(([, v]) => v !== false)),
-    settings: [m.interval, m.retries, m.retryInterval, m.timeout, m.resendInterval, m.parentMode, m.active, m.description, m.icon],
+    settings: [m.interval, m.retries, m.retryInterval, m.timeout, m.resendInterval, m.parentMode, m.active, m.description, m.icon, m.iconSize],
     parents: edges.filter((e) => e.childId === m.id).map((e) => name.get(e.parentId)).sort(),
     tags: (tagMap.get(m.id) ?? []).map((t) => tags.get(t)),
     image: m.icon === 'upload' ? Buffer.from(store.getIcon(m.id).data).toString('hex') : null,
@@ -61,7 +61,7 @@ test('an export imports into a new install as the same monitors', () => {
   const api1 = add(src, 'API', 'http', { config: { url: 'https://a.example/', method: 'GET', acceptedCodes: '200-299' } });
   const api2 = add(src, 'API', 'http', { config: { url: 'https://b.example/', method: 'GET', acceptedCodes: '200-299' } });
   const push = add(src, 'Backup', 'push');
-  add(src, 'Folder', 'group', { icon: 'emoji:📁' });
+  add(src, 'Folder', 'group', { icon: 'emoji:📁', iconSize: 140 });
   const sw = add(src, 'Core switch', 'snmp', { config: { host: '192.168.1.2', port: '1161', version: '1', community: 'not-public', oids: 'Temp = 1.3.6.1.4.1.9.1.0\nFan = 1.3.6.1.4.1.9.2.0', hide: ['if:Gi1/0/48', 'section:resources'], card: ['cpu', 'if:Gi1/0/1'] } });
   src.addEdge(router, sw);
   src.addEdge(wan, router);

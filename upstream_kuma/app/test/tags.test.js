@@ -79,7 +79,7 @@ test('saving a monitor sets its tags and can pass new ones downstream', async ()
 
   await call('PUT', `/api/monitors/${ids.Site}`, { tagIds: [b.id], tagsDownstream: true });
   assert.deepEqual(await tagsOf('Site'), ['Network']);
-  assert.deepEqual(await tagsOf('NAS'), ['Network', 'Prod']); // kept its own tag
+  assert.deepEqual(await tagsOf('NAS'), ['Prod', 'Network']); // kept its own tag (in tag order)
 
   // Only newly added tags travel: re-saving with the same tags doesn't
   // re-tag a dependent that had it removed.
@@ -117,4 +117,52 @@ test('a tag can carry a default icon, uploaded or not', async () => {
   assert.ok(store.getTagIcon(t.id));
   await call('PUT', `/api/tags/${t.id}`, { icon: '' });
   await assert.rejects(call('GET', `/api/tags/${t.id}/icon`), /No icon/);
+});
+
+test('tags have an order: new ones go last, and reordering changes whose icon a monitor gets', async () => {
+  const { call, ids, store } = setup();
+  const b = await call('POST', '/api/tags', { name: 'B', color: '#a78bfa', icon: 'builtin:bolt:#FACC15' });
+  const a = await call('POST', '/api/tags', { name: 'A', color: '#60a5fa', icon: 'builtin:server' });
+  assert.equal(b.icon, 'builtin:bolt:#facc15');
+  const names = async () => (await call('GET', '/api/tags')).map((t) => t.name);
+  assert.deepEqual(await names(), ['B', 'A']);
+  await call('PUT', `/api/monitors/${ids.NAS}`, { ...store.getMonitor(ids.NAS), tagIds: [a.id, b.id] });
+  const { tagIconSpecs } = await import('../src/icons.js');
+  const iconOf = () => tagIconSpecs(store.listTags(), store.monitorTagMap()).get(ids.NAS);
+  assert.equal(iconOf(), 'builtin:bolt:#facc15');
+
+  // Listed ids come first; any left out keep their order after them.
+  const c = await call('POST', '/api/tags', { name: 'C', color: '#22d3ee' });
+  assert.deepEqual((await call('POST', '/api/tags/order', { ids: [a.id] })).map((t) => t.name), ['A', 'B', 'C']);
+  assert.equal(iconOf(), 'builtin:server');
+  assert.deepEqual(store.monitorTagMap().get(ids.NAS), [a.id, b.id]);
+  await call('POST', '/api/tags/order', { ids: [c.id, b.id, a.id] });
+  assert.deepEqual(await names(), ['C', 'B', 'A']);
+  assert.equal(iconOf(), 'builtin:bolt:#facc15');
+  await assert.rejects(call('POST', '/api/tags/order', { ids: [999] }), /Unknown tag/);
+  await assert.rejects(call('POST', '/api/tags/order', {}), /list of tag ids/);
+});
+
+test('upgrading keeps tags in name order', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { DatabaseSync } = await import('node:sqlite');
+  const { MIGRATIONS } = await import('../src/db.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uk-tags-'));
+  const file = path.join(dir, 'db.sqlite');
+  try {
+    const db = new DatabaseSync(file);
+    for (let v = 0; v < 8; v++) (typeof MIGRATIONS[v] === 'function' ? MIGRATIONS[v](db) : db.exec(MIGRATIONS[v]));
+    db.exec('PRAGMA user_version = 8');
+    for (const n of ['zebra', 'Apple', 'mango']) db.prepare("INSERT INTO tags (name, color) VALUES (?, '#000000')").run(n);
+    db.close();
+    const store = new Store(file);
+    assert.deepEqual(store.listTags().map((t) => t.name), ['Apple', 'mango', 'zebra']);
+    const id = store.createTag({ name: 'Banana', color: '#000000' });
+    assert.equal(store.listTags().at(-1).id, id);
+    store.close();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

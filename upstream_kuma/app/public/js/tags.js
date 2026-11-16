@@ -15,7 +15,8 @@ export function tagIconView(tag) {
   if (spec === 'upload') return { kind: 'image', src: `api/tags/${tag.id}/icon?v=${tag.iconV}` };
   const i = spec.indexOf(':');
   const value = spec.slice(i + 1);
-  return { builtin: { kind: 'builtin', name: value }, emoji: { kind: 'emoji', value }, url: { kind: 'image', src: value } }[spec.slice(0, i)] ?? null;
+  const [name, color] = value.split(':');
+  return { builtin: { kind: 'builtin', name, color }, emoji: { kind: 'emoji', value }, url: { kind: 'image', src: value } }[spec.slice(0, i)] ?? null;
 }
 
 // A small coloured pill. With `onclick` it is a button.
@@ -46,17 +47,27 @@ export function matchIcon(mode) {
     svg('path', { class: 'venn-line', d: circles }));
 }
 
-// Swatches plus a custom colour input.
-export function colorPicker(value, onPick, label = 'Tag colour') {
+// Swatches plus a custom colour input. With `none` (its label), the first
+// swatch picks no colour at all (''), e.g. a built-in icon's usual one.
+export function colorPicker(value, onPick, label = 'Tag colour', { none } = {}) {
   const custom = h('input', {
     type: 'color',
     class: 'swatch-custom',
-    value,
+    value: value || '#7dd3fc',
     title: 'Custom colour',
     'aria-label': 'Custom colour',
     onchange: (e) => onPick(e.target.value.toLowerCase()),
   });
   return h('div', { class: 'swatches', role: 'radiogroup', 'aria-label': label },
+    none ? h('button', {
+      type: 'button',
+      class: `swatch swatch-none${value ? '' : ' on'}`,
+      role: 'radio',
+      'aria-checked': String(!value),
+      'aria-label': none,
+      title: none,
+      onclick: () => onPick(''),
+    }) : null,
     TAG_COLORS.map((c) => h('button', {
       type: 'button',
       class: `swatch${c === value ? ' on' : ''}`,

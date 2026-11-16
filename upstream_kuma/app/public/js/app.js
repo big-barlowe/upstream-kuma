@@ -1563,14 +1563,93 @@ async function renderTags(box) {
             }),
         }, 'Delete')));
   };
+  if (box.ordering) return renderTagOrder(box, tags, reload);
   fill(box, h('div', { class: 'stack' },
     h('div', { class: 'page-head' },
       h('h1', null, 'Tags'),
-      h('button', { class: 'btn primary', onclick: () => newTagDialog(tags, reload) }, '+ New tag'),
+      h('div', { class: 'page-actions' },
+        tags.length > 1 ? h('button', {
+          class: 'btn',
+          title: 'Change the order of the tags. A monitor with several tags that have icons shows the first one’s.',
+          onclick: () => {
+            box.ordering = true;
+            renderTagOrder(box, tags, reload);
+          },
+        }, 'Edit order') : null,
+        h('button', { class: 'btn primary', onclick: () => newTagDialog(tags, reload) }, '+ New tag')),
       h('p', { class: 'muted' }, 'Group monitors across the hierarchy, by site, owner or anything else. Give a tag an icon to use it for every monitor that carries it. Filter by tag in the sidebar: pick several tags and choose whether a monitor needs any of them or all of them, or use Advanced for combinations like Switch & (Home | Cabin). To tag several monitors at once, select them: shift-click them in the Falls or the monitor list, or shift-drag a box in the Falls.')),
     tags.length
       ? h('div', { class: 'card tag-list' }, tags.map(editor))
       : h('div', { class: 'card' }, h('p', { class: 'muted' }, 'No tags yet.'))));
+}
+
+// Edit order: drag the tags (or use the arrows) and save. The order decides
+// which icon a monitor with several tags gets, and the order tags are listed in.
+function renderTagOrder(box, tags, reload) {
+  let order = [...tags];
+  const list = h('ol', { class: 'card tag-order' });
+  // While dragging, the row itself moves; the list is redrawn when it's dropped.
+  const settle = () => {
+    const byId = new Map(order.map((t) => [t.id, t]));
+    order = [...list.children].map((li) => byId.get(Number(li.dataset.id)));
+    paint();
+  };
+  const done = (save) => async () => {
+    if (save) {
+      try {
+        await api('tags/order', { method: 'POST', body: { ids: order.map((t) => t.id) } });
+        toast('Saved the tag order', 'success');
+      } catch (err) {
+        toast(err.message, 'error');
+        return;
+      }
+    }
+    box.ordering = false;
+    reload();
+  };
+  const move = (i, j, focus) => {
+    if (j < 0 || j >= order.length || i === j) return;
+    order.splice(j, 0, ...order.splice(i, 1));
+    paint();
+    if (focus) list.children[j]?.querySelector(`.${focus}`)?.focus();
+  };
+  const paint = () => fill(list, order.map((t, i) => h('li', {
+    class: 'tag-order-item',
+    draggable: 'true',
+    'data-id': t.id,
+    ondragstart: (e) => {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', t.name);
+      e.currentTarget.classList.add('dragging');
+    },
+    ondragend: settle,
+    ondragover: (e) => {
+      const dragged = list.querySelector('.dragging');
+      if (!dragged) return;
+      e.preventDefault();
+      const li = e.currentTarget;
+      if (li === dragged) return;
+      const r = li.getBoundingClientRect();
+      list.insertBefore(dragged, e.clientY < r.top + r.height / 2 ? li : li.nextSibling);
+    },
+    ondrop: (e) => e.preventDefault(),
+  },
+  h('span', { class: 'tag-order-grip', 'aria-hidden': 'true' }, '⠿'),
+  h('span', { class: 'tag-order-n' }, i + 1),
+  tagPill(t),
+  t.icon ? iconEl(tagIconView(t), 18) : h('span', { class: 'muted small' }, 'no icon'),
+  h('span', { class: 'tag-order-arrows' },
+    h('button', { type: 'button', class: 'btn small ghost up', disabled: i === 0, 'aria-label': `Move ${t.name} up`, onclick: () => move(i, i - 1, 'up') }, '↑'),
+    h('button', { type: 'button', class: 'btn small ghost down', disabled: i === order.length - 1, 'aria-label': `Move ${t.name} down`, onclick: () => move(i, i + 1, 'down') }, '↓')))));
+  paint();
+  fill(box, h('div', { class: 'stack' },
+    h('div', { class: 'page-head' },
+      h('h1', null, 'Tag order'),
+      h('div', { class: 'page-actions' },
+        h('button', { class: 'btn ghost', onclick: done(false) }, 'Cancel'),
+        h('button', { class: 'btn primary', onclick: done(true) }, 'Save order')),
+      h('p', { class: 'muted' }, 'Drag the tags, or use the arrows. When a monitor has several tags with icons, it shows the icon of the one highest on this list (unless it has an icon of its own). Tags are listed in this order everywhere.')),
+    list));
 }
 
 // The default icon for monitors with this tag that are left on automatic.
@@ -1584,7 +1663,7 @@ function tagIconDialog(t, onSaved) {
     autoHelp: () => 'Monitors with this tag keep their usual automatic icon.',
   });
   modal(`Icon for ${t.name}`, h('div', { class: 'stack-sm' },
-    h('p', { class: 'muted small' }, `Monitors tagged ${t.name} show this icon unless they have an icon of their own. It also replaces their automatic icon (such as a website’s favicon). With several tags, the first one in alphabetical order that has an icon is used.`),
+    h('p', { class: 'muted small' }, `Monitors tagged ${t.name} show this icon unless they have an icon of their own. It also replaces their automatic icon (such as a website’s favicon). With several tags, the one highest in the tag order (Tags → Edit order) that has an icon is used.`),
     chooser.el),
   [{
     label: 'Save',

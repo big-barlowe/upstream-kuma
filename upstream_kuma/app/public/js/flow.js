@@ -9,6 +9,13 @@ const LEVEL_H = 112;
 const PAD = 28;
 const SOURCE_H = 70;
 const BADGE = { cx: 26, cy: 28, r: 15 };
+// Groups stand for places (a site, a rack), so they are round and show just
+// their icon, big (a logo on a light disc); the name shows on hover, keyboard
+// focus or while traced, in a label under the circle.
+const GROUP = { d: 92, image: 64, glyph: 46, label: 12.5 };
+const FONT_STACK = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+// A node's unscaled size.
+const dims = (m, nodeH) => (m?.type === 'group' ? { w: GROUP.d, h: GROUP.d, round: true } : { w: NODE_W, h: nodeH });
 const TEXT_X = 50;
 const TAG = { x: 12, y: 52, h: 13, pad: 5, gap: 4 };
 const TAG_FONT = '600 9px ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
@@ -140,20 +147,27 @@ function structure(monitors) {
 function treeLayout(monitors, nodeH, scaleOf = () => 1) {
   const { level, roots, slot, slots } = structure(monitors);
   const pos = new Map();
+  // Rows are as tall as their tallest node (round groups are taller than
+  // cards), with the same gap between them.
+  const maxLevel = Math.max(0, ...level.values());
+  const rowH = Array(maxLevel + 1).fill(nodeH);
+  for (const m of monitors) rowH[level.get(m.id)] = Math.max(rowH[level.get(m.id)], dims(m, nodeH).h);
+  const mid = [];
+  rowH.forEach((rh, l) => mid.push(l ? mid[l - 1] + rowH[l - 1] / 2 + LEVEL_H - nodeH + rh / 2 : PAD + SOURCE_H + rh / 2));
   for (const m of monitors) {
     const s = scaleOf(m.id);
-    const w = NODE_W * s;
-    const h = nodeH * s;
-    pos.set(m.id, { x: PAD + slot.get(m.id) * SLOT_W + (NODE_W - w) / 2, y: PAD + SOURCE_H + level.get(m.id) * LEVEL_H + (nodeH - h) / 2, w, h, s });
+    const d = dims(m, nodeH);
+    const w = d.w * s;
+    const h = d.h * s;
+    pos.set(m.id, { x: PAD + slot.get(m.id) * SLOT_W + (NODE_W - w) / 2, y: mid[level.get(m.id)] - h / 2, w, h, s, round: d.round });
   }
-  const maxLevel = Math.max(0, ...level.values());
   const xs = roots.map((r) => pos.get(r).x + pos.get(r).w / 2);
   const source = { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: PAD + 14 };
   return {
     pos,
     source,
     width: PAD * 2 + slots * SLOT_W - (SLOT_W - NODE_W),
-    height: PAD * 2 + SOURCE_H + maxLevel * LEVEL_H + nodeH,
+    height: mid[maxLevel] + rowH[maxLevel] / 2 + PAD,
     stream: (from, to) => (from
       ? curve(from.x + from.w / 2, from.y + from.h, to.x + to.w / 2, to.y)
       : curve(source.x, source.y + 10, to.x + to.w / 2, to.y)),
@@ -174,6 +188,7 @@ const RING = { gap: NODE_H + 36, margin: 10, perSlot: (40 * Math.PI) / 180, top:
 
 function ringLayout(monitors, nodeH, scaleOf = () => 1) {
   const { level, roots, kids, byName } = structure(monitors);
+  const monitorById = new Map(monitors.map((m) => [m.id, m]));
 
   // The trunk: from a lone root down to where it first branches.
   const trunk = [];
@@ -230,21 +245,27 @@ function ringLayout(monitors, nodeH, scaleOf = () => 1) {
   // Place: the middle and the trunk first, then outward level by level (and
   // stacked row by row), the middle of each level before its edges.
   const M = RING.margin * 2;
-  const size = (id) => ({ w: NODE_W * scaleOf(id), h: nodeH * scaleOf(id) });
+  const size = (id) => {
+    const d = dims(monitorById.get(id), nodeH);
+    return { w: d.w * scaleOf(id), h: d.h * scaleOf(id) };
+  };
   const centre = new Map(); // centres and sizes
   const placed = [];
   const put = (id, c) => {
     centre.set(id, c);
     placed.push(c);
   };
-  const STEP = nodeH + 42;
+  let top = null; // the highest of the hub and its trunk
   if (hub != null) {
-    put(hub, { x: 0, y: 0, ...size(hub) });
-    trunk.forEach((id, i) => put(id, { x: 0, y: -(trunk.length - i) * STEP, ...size(id) }));
+    put(hub, top = { x: 0, y: 0, ...size(hub) });
+    for (const id of [...trunk].reverse()) {
+      const z = size(id);
+      put(id, top = { x: 0, y: top.y - top.h / 2 - 42 - z.h / 2, ...z });
+    }
   } else {
     placed.push({ x: 0, y: 0, w: NODE_W, h: nodeH }); // the source
   }
-  const src = hub != null ? { x: 0, y: -trunk.length * STEP - nodeH / 2 - 40 } : { x: 0, y: 0 };
+  const src = top ? { x: 0, y: top.y - top.h / 2 - 40 } : { x: 0, y: 0 };
   // The source above the hub (or its trunk) is in the way too: without this,
   // a hub that branches straight away (no trunk) gets a child drawn over it.
   if (hub != null) placed.push({ x: src.x, y: src.y, ...HOLE_BOX });
@@ -284,10 +305,10 @@ function ringLayout(monitors, nodeH, scaleOf = () => 1) {
   const maxY = Math.max(src.y + 12, ...cs.map((c) => c.y + c.h / 2));
   const dx = PAD - minX;
   const dy = PAD - minY;
-  const pos = new Map([...centre].map(([id, c]) => [id, { x: c.x - c.w / 2 + dx, y: c.y - c.h / 2 + dy, w: c.w, h: c.h, s: scaleOf(id) }]));
+  const pos = new Map([...centre].map(([id, c]) => [id, { x: c.x - c.w / 2 + dx, y: c.y - c.h / 2 + dy, w: c.w, h: c.h, s: scaleOf(id), round: monitorById.get(id)?.type === 'group' }]));
   const source = { x: src.x + dx, y: src.y + dy };
   const middle = { x: dx, y: dy };
-  const box = (p) => p && { x: p.x, y: p.y, w: p.w, h: p.h };
+  const box = (p) => p && { x: p.x, y: p.y, w: p.w, h: p.h, round: p.round };
   return {
     pos,
     source,
@@ -335,7 +356,7 @@ function river(mid, a, b, fromBox, toBox, seed) {
     const off = amp * Math.sin(2 * Math.PI * u) * Math.sin(Math.PI * u);
     pts.push({ x: p.x - (ty / tl) * off, y: p.y + (tx / tl) * off });
   }
-  const inside = (p, bx) => bx && p.x > bx.x - 1 && p.x < bx.x + bx.w + 1 && p.y > bx.y - 1 && p.y < bx.y + bx.h + 1;
+  const inside = (p, bx) => bx && within(p, bx, 1);
   let i0 = 0;
   while (i0 < pts.length - 2 && inside(pts[i0 + 1], fromBox)) i0++;
   let i1 = pts.length - 1;
@@ -346,6 +367,13 @@ function river(mid, a, b, fromBox, toBox, seed) {
   return kept.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join('');
 }
 
+// Whether a point is inside a node's box (or its circle, for a group), give
+// or take `slack`.
+function within(p, b, slack = 0) {
+  if (b.round) return Math.hypot(p.x - b.x - b.w / 2, p.y - b.y - b.h / 2) < b.w / 2 + slack;
+  return p.x > b.x - slack && p.x < b.x + b.w + slack && p.y > b.y - slack && p.y < b.y + b.h + slack;
+}
+
 // Where the segment from `p` (inside the box) to `q` (outside) leaves it.
 function edgePoint(p, q, b) {
   let lo = 0;
@@ -354,7 +382,7 @@ function edgePoint(p, q, b) {
     const m = (lo + hi) / 2;
     const x = p.x + (q.x - p.x) * m;
     const y = p.y + (q.y - p.y) * m;
-    if (x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h) lo = m;
+    if (within({ x, y }, b)) lo = m;
     else hi = m;
   }
   return { x: p.x + (q.x - p.x) * hi, y: p.y + (q.y - p.y) * hi };
@@ -399,7 +427,7 @@ function layoutIcon(mode) {
 }
 
 const truncate = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
-const iconKey = (i) => (i ? `${i.kind}:${i.src ?? i.name ?? i.value}` : '');
+const iconKey = (i) => (i ? `${i.kind}:${i.src ?? i.name ?? i.value}:${i.color ?? ''}:${i.size ?? ''}` : '');
 
 let measureCtx;
 function textWidth(s, font = TAG_FONT) {
@@ -721,7 +749,7 @@ export class FlowView {
       const keep = new Set([focus, ...rel.up.keys(), ...rel.down.keys()]);
       shown = monitors.filter((m) => keep.has(m.id)).map((m) => ({ ...m, parents: m.parents.filter((p) => keep.has(p)), allParents: m.parents }));
     }
-    const key = JSON.stringify([this.mode, focus, shown.map((m) => [m.id, m.name, m.parents, iconKey(m.icon), m.tagList?.map((t) => t.name + t.color)])]);
+    const key = JSON.stringify([this.mode, focus, shown.map((m) => [m.id, m.name, m.type === 'group', m.parents, iconKey(m.icon), m.tagList?.map((t) => t.name + t.color)])]);
     if (key !== this.topology) this.#build(shown, key, focus, rel);
     this.#paint(monitors);
   }
@@ -739,11 +767,12 @@ export class FlowView {
     const L = (this.mode === 'rings' ? ringLayout : treeLayout)(monitors, nodeH, scaleOf);
     const { pos, width, height } = L;
     const oldBoxes = this.boxes;
-    this.boxes = new Map([...pos].map(([id, p]) => [id, { x: p.x, y: p.y, w: p.w, h: p.h }]));
+    this.boxes = new Map([...pos].map(([id, p]) => [id, { x: p.x, y: p.y, w: p.w, h: p.h, round: p.round }]));
     const { x: srcX, y: srcY } = L.source;
 
     const edges = svg('g', { class: 'edges' });
     const nodes = svg('g', { class: 'nodes' });
+    const labels = svg('g', { class: 'group-labels' });
     this.edgeEls = [];
     this.nodeEls = new Map();
 
@@ -769,14 +798,21 @@ export class FlowView {
 
     for (const m of monitors) {
       const { x, y, s: scale } = pos.get(m.id);
+      const group = m.type === 'group';
+      const W = group ? GROUP.d : NODE_W;
+      const H = group ? GROUP.d : nodeH;
+      // where ripples start: the badge, or a group's whole circle
+      const badge = group ? { cx: W / 2, cy: W / 2, r: W / 2 } : BADGE;
+      // corners: on a circle, where 45° meets the rim
+      const corner = group ? W / 2 - (W / 2) * Math.SQRT1_2 : 0;
       const title = svg('title');
       const sub = svg('text', { class: 'sub', x: TEXT_X, y: 42 });
-      const pool = svg('rect', { class: 'pool', width: NODE_W, height: nodeH, rx: 14 });
+      const pool = svg('rect', { class: `pool${group && m.icon?.kind === 'image' ? ' pool-image' : ''}`, width: W, height: H, rx: group ? W / 2 : 14 });
       const parentCount = (m.allParents ?? m.parents).length;
       const role = m.id === focus ? ' focused' : rel?.up.has(m.id) ? ' upstream' : rel?.down.has(m.id) ? ' downstream' : '';
       const expand = svg('g', {
         class: 'expand',
-        transform: `translate(${NODE_W - 3},3)`,
+        transform: group ? `translate(${W - corner},${corner})` : `translate(${NODE_W - 3},3)`,
         tabindex: 0,
         role: 'button',
         'aria-label': `Show details for ${m.name}`,
@@ -797,16 +833,19 @@ export class FlowView {
 
       const inner = svg('g', { class: 'node-inner' },
         title,
-        svg('rect', { class: 'sel-ring', x: -4, y: -4, width: NODE_W + 8, height: nodeH + 8, rx: 18 }),
+        svg('rect', { class: 'sel-ring', x: -4, y: -4, width: W + 8, height: H + 8, rx: group ? W / 2 + 4 : 18 }),
         pool,
-        svg('g', { class: `node-badge${m.icon ? ` kind-${m.icon.kind}` : ''}` },
-          svg('circle', { class: 'ring', cx: BADGE.cx, cy: BADGE.cy, r: BADGE.r }),
-          iconSvg(m.icon, BADGE.cx, BADGE.cy, 18) ?? svg('circle', { class: 'dot', cx: BADGE.cx, cy: BADGE.cy, r: 5 })),
-        svg('text', { class: 'name', x: TEXT_X, y: 24 }, truncate(m.name, 17)),
-        sub,
-        parentCount > 1 ? svg('text', { class: 'multi', x: NODE_W - 12, y: 42, 'text-anchor': 'end' }, `⑂${parentCount}`) : null,
-        m.tagList?.length ? tagRow(m.tagList) : null,
-        svg('g', { class: 'sel-mark', transform: 'translate(2,2)', 'aria-hidden': 'true' },
+        group
+          ? svg('g', { class: `node-badge group-badge${m.icon ? ` kind-${m.icon.kind}` : ''}` },
+            iconSvg(m.icon, W / 2, W / 2, m.icon?.kind === 'image' ? GROUP.image : GROUP.glyph, 'group-clip') ?? svg('circle', { class: 'dot', cx: W / 2, cy: W / 2, r: 7 }))
+          : svg('g', { class: `node-badge${m.icon ? ` kind-${m.icon.kind}` : ''}` },
+            svg('circle', { class: 'ring', cx: BADGE.cx, cy: BADGE.cy, r: BADGE.r }),
+            iconSvg(m.icon, BADGE.cx, BADGE.cy, 18, 'badge-clip') ?? svg('circle', { class: 'dot', cx: BADGE.cx, cy: BADGE.cy, r: 5 })),
+        group ? null : svg('text', { class: 'name', x: TEXT_X, y: 24 }, truncate(m.name, 17)),
+        group ? null : sub,
+        !group && parentCount > 1 ? svg('text', { class: 'multi', x: NODE_W - 12, y: 42, 'text-anchor': 'end' }, `⑂${parentCount}`) : null,
+        !group && m.tagList?.length ? tagRow(m.tagList) : null,
+        svg('g', { class: 'sel-mark', transform: group ? `translate(${corner},${corner})` : 'translate(2,2)', 'aria-hidden': 'true' },
           svg('circle', { r: 8 }),
           svg('path', { d: 'M-3.5 0.2L-1 2.7L3.6 -2.2' })),
         expand);
@@ -831,7 +870,26 @@ export class FlowView {
         },
       }, inner);
       nodes.append(g);
-      this.nodeEls.set(m.id, { g, inner, pool, title, sub, role, tags: m.tagList ?? [], s: scale });
+      if (group) {
+        // The name label is drawn over every node (so a neighbour can't hide
+        // it), shown while the pointer or keyboard focus is on the group.
+        const w = textWidth(m.name, `600 ${GROUP.label}px ${FONT_STACK}`) + 18;
+        const { w: bw, h: bh } = pos.get(m.id);
+        const label = svg('g', {
+          class: `group-label${m.id === focus ? ' pinned' : ''}`,
+          transform: `translate(${x + bw / 2},${y + bh + 6 * scale})${scale !== 1 ? ` scale(${scale})` : ''}`,
+          'aria-hidden': 'true',
+        },
+        svg('rect', { x: -w / 2, y: 0, width: w, height: 22, rx: 11 }),
+        svg('text', { x: 0, y: 11.5, 'text-anchor': 'middle', 'dominant-baseline': 'central' }, m.name));
+        labels.append(label);
+        const show = (on) => () => label.classList.toggle('show', on);
+        g.addEventListener('pointerenter', show(true));
+        g.addEventListener('pointerleave', show(false));
+        g.addEventListener('focus', show(true));
+        g.addEventListener('blur', show(false));
+      }
+      this.nodeEls.set(m.id, { g, inner, pool, title, sub, role, tags: m.tagList ?? [], s: scale, badge });
     }
 
     const hole = sourceHole(srcX, srcY, focus === SOURCE);
@@ -856,7 +914,7 @@ export class FlowView {
 
     // Streams and cards are two SVGs, so the water's canvas can go between
     // them (under the cards). Both move together (#show).
-    this.viewEl = svg('g', { class: 'viewport' }, nodes, hole.hit);
+    this.viewEl = svg('g', { class: 'viewport' }, nodes, labels, hole.hit);
     this.streamsEl = svg('svg', { class: 'flow-svg flow-streams', width, height, viewBox: `0 0 ${width} ${height}`, 'aria-hidden': 'true' }, edges);
     this.size = { width, height };
     if (this.gl) this.gl.key = null; // new streams
@@ -878,7 +936,11 @@ export class FlowView {
       'aria-label': 'Monitor hierarchy flow diagram. Drag to move around; hold Ctrl or ⌘ and scroll, or pinch, to zoom.',
     },
     svg('defs', {},
-      glowFilter('glow-box', { x: '-50%', y: '-50%', width: '200%', height: '200%' })),
+      glowFilter('glow-box', { x: '-50%', y: '-50%', width: '200%', height: '200%' }),
+      // enlarged image icons stay inside their circle (in each node's own
+      // coordinates, which are the same for every card and every group)
+      svg('clipPath', { id: 'badge-clip' }, svg('circle', { cx: BADGE.cx, cy: BADGE.cy, r: BADGE.r - 1 })),
+      svg('clipPath', { id: 'group-clip' }, svg('circle', { cx: GROUP.d / 2, cy: GROUP.d / 2, r: GROUP.d / 2 - 1.25 }))),
     this.viewEl);
     this.holeOff = undefined;
     this.rasterK = null;
@@ -1391,7 +1453,7 @@ export class FlowView {
       const s = n.s;
       if (n.status === 'up' && !n.context) {
         if (!ripples.has(s)) ripples.set(s, []);
-        ripples.get(s).push([b.x + BADGE.cx * s, b.y + BADGE.cy * s]);
+        ripples.get(s).push([b.x + n.badge.cx * s, b.y + n.badge.cy * s, n.badge.r]);
       }
       const pulse = n.status === 'down' ? PULSE.down : n.sev ? PULSE[n.sev] : null;
       if (pulse) pulses.push({ ...pulse, b, s });
@@ -1463,10 +1525,10 @@ export class FlowView {
       ctx.globalAlpha = 0.7 * (1 - p);
       ctx.strokeStyle = ink.up;
       for (const [s, at] of ripples) {
-        const r = BADGE.r * s * (1 + 0.5 * p);
         ctx.lineWidth = 2 * s;
         ctx.beginPath();
-        for (const [cx, cy] of at) {
+        for (const [cx, cy, r0] of at) {
+          const r = r0 * s * (1 + 0.5 * p);
           ctx.moveTo(cx + r, cy);
           ctx.arc(cx, cy, r, 0, 2 * Math.PI);
         }
@@ -1479,7 +1541,7 @@ export class FlowView {
       ctx.strokeStyle = ink[color];
       ctx.lineWidth = (1.5 + (width - 1.5) * q) * s;
       ctx.beginPath();
-      ctx.roundRect(b.x, b.y, b.w, b.h, 14 * s);
+      ctx.roundRect(b.x, b.y, b.w, b.h, b.round ? b.w / 2 : 14 * s);
       ctx.stroke();
     }
     ctx.globalAlpha = 1;

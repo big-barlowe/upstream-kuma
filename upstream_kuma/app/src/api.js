@@ -403,6 +403,17 @@ export function createApi({ store, engine, icons }) {
     return store.getTag(id);
   });
 
+  // The order decides which tag's icon a monitor with several gets.
+  route('POST', '/api/tags/order', ({ body }) => {
+    const ids = idList(body.ids);
+    if (!ids) throw new HttpError(400, 'Expected ids: a list of tag ids');
+    if (ids.some((id) => !store.getTag(id))) throw new HttpError(400, 'Unknown tag');
+    store.tx(() => store.orderTags([...new Set(ids)]));
+    engine.touch();
+    iconsChanged(null);
+    return store.listTags();
+  });
+
   route('PUT', '/api/tags/:id', ({ params, body }) => {
     const existing = tagOr404(params.id);
     const t = normalizeTag(body, existing);

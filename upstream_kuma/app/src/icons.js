@@ -12,7 +12,8 @@ const MAX_PAGE_BYTES = 512 * 1024;
 //   ''               automatic: the site's favicon for HTTP monitors, the server
 //                    icon for Minecraft, a folder for groups
 //   'none'           no icon
-//   'builtin:<name>' one of the UI's built-in glyphs (public/js/icons.js)
+//   'builtin:<name>' one of the UI's built-in glyphs (public/js/icons.js),
+//                    optionally in a colour: 'builtin:bolt:#facc15'
 //   'emoji:<text>'   an emoji
 //   'url:<url>'      an image the server fetches and caches
 //   'upload'         an image uploaded through the UI
@@ -29,7 +30,7 @@ export function parseIconSpec(spec) {
 }
 
 // Monitor id -> the icon spec it gets from its tags: a monitor left on
-// automatic takes the icon of its first tag (in name order) that has one.
+// automatic takes the icon of its first tag (in tag order) that has one.
 export function tagIconSpecs(tags, tagMap) {
   const byId = new Map(tags.filter((t) => t.icon).map((t) => [t.id, t]));
   const out = new Map();
@@ -40,12 +41,21 @@ export function tagIconSpecs(tags, tagMap) {
   return out;
 }
 
+// An image drawn bigger or smaller than usual carries `size` (a factor).
+const sized = (icon, m) => (m.iconSize && m.iconSize !== 100 ? { ...icon, size: m.iconSize / 100 } : icon);
+
+// 'bolt' or 'bolt:#facc15' -> the UI's descriptor.
+export function builtinIcon(value) {
+  const [name, color] = value.split(':');
+  return color ? { kind: 'builtin', name, color } : { kind: 'builtin', name };
+}
+
 // Normalizes a spec from the API, throwing on anything malformed.
 export function validateIconSpec(spec) {
   const s = String(spec ?? '').trim();
   if (!s || s === 'none' || s === 'upload') return s;
   const { kind, value } = parseIconSpec(s);
-  if (kind === 'builtin' && /^[a-z0-9-]{1,32}$/.test(value)) return s;
+  if (kind === 'builtin' && /^[a-z0-9-]{1,32}(:#[0-9a-f]{6})?$/i.test(value)) return `builtin:${value.toLowerCase()}`;
   if (kind === 'emoji' && value.trim() && value.length <= 16) return `emoji:${value.trim()}`;
   if (kind === 'tag') throw new Error('Unknown icon setting');
   if (kind === 'url') {
@@ -199,15 +209,15 @@ export class IconCache {
   describe(m) {
     const spec = parseIconSpec(this.#spec(m));
     if (spec.kind === 'none') return null;
-    if (spec.kind === 'builtin') return { kind: 'builtin', name: spec.value };
+    if (spec.kind === 'builtin') return builtinIcon(spec.value);
     if (spec.kind === 'emoji') return { kind: 'emoji', value: spec.value };
     if (spec.kind === 'tag') {
       const [id, v] = spec.value.split('@');
-      return { kind: 'image', src: `api/tags/${id}/icon?v=${v}` };
+      return sized({ kind: 'image', src: `api/tags/${id}/icon?v=${v}` }, m);
     }
     const meta = this.meta.get(m.id);
     if (meta?.hasData && meta.source === this.wanted(m)) {
-      return { kind: 'image', src: `api/monitors/${m.id}/icon?v=${meta.updatedAt}` };
+      return sized({ kind: 'image', src: `api/monitors/${m.id}/icon?v=${meta.updatedAt}` }, m);
     }
     if (spec.kind === 'auto' && m.type === 'group') return { kind: 'builtin', name: 'folder' };
     if (spec.kind === 'auto' && m.type === 'minecraft') return { kind: 'builtin', name: 'gamepad' };

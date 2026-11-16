@@ -56,8 +56,12 @@ export function normalizeMonitor(body, existing) {
     active: body.active ?? base.active ?? true,
     description: String(body.description ?? base.description ?? ''),
     icon: body.icon === undefined ? base.icon ?? '' : badRequest(() => validateIconSpec(body.icon)),
+    iconSize: int(body.iconSize, base.iconSize ?? 100, ICON_SIZE.min, ICON_SIZE.max),
   };
 }
+
+// An image icon's size, in percent of the usual one.
+export const ICON_SIZE = { min: 50, max: 200 };
 
 export const TAG_COLOR = /^#[0-9a-f]{6}$/;
 

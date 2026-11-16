@@ -105,6 +105,7 @@ These columns apply to every monitor type. The same reference, built from the im
 | `resend_interval` | 0–10000 | `0` | Remind every N down checks; `0` = alert once. |
 | `description` | text | | |
 | `icon` | see below | automatic | |
+| `icon_size` | number | 100 | How big an image icon is drawn, in percent of the usual size, 50–200. |
 | `tags` | list | none | See below. |
 
 Numbers outside a range are clamped to it, e.g. an interval of `5` becomes `10`.
@@ -115,7 +116,7 @@ Numbers outside a range are clamped to it, e.g. an interval of `5` becomes `10`.
 |---|---|
 | *(blank)* | Automatic: the icon of the monitor's tags if one has one, else the site's favicon for HTTP, the server icon for Minecraft, a folder for groups, nothing for the rest. Tag icons themselves are not in the CSV file; set them on the Tags page. |
 | `none` | No icon. |
-| `builtin:<name>` | A built-in icon: `globe`, `cloud`, `router`, `switch`, `wifi`, `server`, `nas`, `database`, `container`, `cpu`, `shield`, `lock`, `home`, `bulb`, `camera`, `sensor`, `bolt`, `power`, `tv`, `speaker`, `phone`, `gamepad`, `printer`, `mail`, `drop`, `folder`. |
+| `builtin:<name>` | A built-in icon: `globe`, `cloud`, `router`, `switch`, `wifi`, `server`, `nas`, `database`, `container`, `cpu`, `shield`, `lock`, `home`, `bulb`, `camera`, `sensor`, `bolt`, `power`, `tv`, `speaker`, `phone`, `gamepad`, `printer`, `mail`, `drop`, `folder`. Add a colour as `builtin:<name>:#rrggbb`, e.g. `builtin:bolt:#facc15`. |
 | `emoji:<emoji>` | Any emoji, e.g. `emoji:🖥️`. |
 | `url:<address>` | An image on the web, downloaded and cached by the add-on. Must start with `http://` or `https://`. |
 | `data:image/…;base64,…` | An uploaded image. Exports write uploaded icons this way so they move with the file. PNG, JPEG, GIF, WebP, SVG or ICO, at most 256 KB. |

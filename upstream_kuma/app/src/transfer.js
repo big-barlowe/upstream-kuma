@@ -28,6 +28,7 @@ export const CSV_COLUMNS = [
   { name: 'resend_interval', field: 'resendInterval', kind: 'int', def: '0', help: 'Remind every N down checks; 0 = alert once.' },
   { name: 'description', field: 'description', help: 'Free text.' },
   { name: 'icon', field: 'icon', help: 'Blank = automatic, none, builtin:<name>, emoji:<emoji>, url:<image URL>, or a data:image/… URL (how exports carry uploaded icons).' },
+  { name: 'icon_size', field: 'iconSize', kind: 'int', def: '100', help: 'How big an image icon is drawn, in percent of the usual size, 50–200.' },
   { name: 'tags', help: 'Tag names separated by |, each optionally followed by its colour: Home #60a5fa | Media. Tags that don’t exist yet are created.' },
   { name: 'url', config: 'url', types: ['http'], required: ['http'], help: 'The URL to request.' },
   { name: 'method', config: 'method', types: ['http'], values: ['GET', 'HEAD', 'POST', 'PUT'], def: 'GET' },

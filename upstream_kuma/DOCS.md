@@ -30,7 +30,7 @@ A monitor can have several parents. With more than one parent, choose one of:
 
 ### Groups
 
-A *group* is a plain folder. It has no check of its own and never blocks what's inside it. It shows the worst status of its contents.
+A *group* is a plain folder. It has no check of its own and never blocks what's inside it. It shows the worst status of its contents. Groups usually stand for a place (a site, a building, a rack), so the Falls draws them as circles showing just their icon, big (a logo on a light disc), to show where things branch. Hover one, or Tab to it, for its name; a traced group keeps its name showing.
 
 ## Arranging monitors
 
@@ -98,7 +98,8 @@ Tags are coloured labels for grouping monitors across the hierarchy, for example
 - **Tag one monitor:** use the Tags field in its settings, or **+ Add tags** in its details panel in the Falls. When you add a tag to a monitor that has dependents, you can also add it to everything downstream (handy for tagging a whole site).
 - **Tag many:** select monitors in the Falls or the list (see above). The selection bar shows every tag: ✓ means all selected monitors have it (click to remove it), `2/5` means some do and `+` means none do (click to add it). Tick **Include downstream** to apply to everything below the selected monitors as well. It starts unticked for every new selection.
 - **Manage:** **Settings → Tags** lets you create, rename, recolour and delete tags. Deleting a tag only removes the label; monitors are not affected.
-- **Default icon:** under **Settings → Tags**, **+ Icon** gives a tag an icon (built-in, emoji, image URL or upload). Every monitor with that tag whose icon is set to *Automatic* shows it, e.g. a switch icon for everything tagged *Switch*. See [Icons](#icons).
+- **Default icon:** under **Settings → Tags**, **+ Icon** gives a tag an icon (built-in, in any colour, emoji, image URL or upload). Every monitor with that tag whose icon is set to *Automatic* shows it, e.g. a yellow bolt for everything tagged *UPS*. See [Icons](#icons).
+- **Order:** **Edit order** under **Settings → Tags** lets you drag the tags (or move them with the arrows) into the order you like. When a monitor has several tags with icons, it shows the icon of the one highest in the order. Tags are listed in this order everywhere. New tags go to the end.
 
 ## Icons
 
@@ -106,12 +107,14 @@ Choose a monitor's icon under **Settings → General → Icon**:
 
 | Option | |
 |---|---|
-| Automatic (default) | The icon of the monitor's tags, if one of them has one (the first in alphabetical order). Otherwise HTTP monitors use the website's favicon and Minecraft monitors the server icon, groups show a folder, and other types have no icon. |
-| Built-in | A set of simple icons for routers, servers, NAS boxes, databases, containers and more. |
+| Automatic (default) | The icon of the monitor's tags, if one of them has one (the first in the tag order, see [Tags](#tags)). Otherwise HTTP monitors use the website's favicon and Minecraft monitors the server icon, groups show a folder, and other types have no icon. |
+| Built-in | A set of simple icons for routers, servers, NAS boxes, databases, containers and more, in their usual light blue or any colour you pick. |
 | Emoji | Any emoji. |
 | Image URL | Any image, e.g. from the [dashboard-icons](https://github.com/homarr-labs/dashboard-icons) project. |
 | Upload | PNG, JPEG, GIF, WebP, SVG or ICO, shrunk to 128 px. |
 | None | No icon. |
+
+**Size:** an image icon (an image URL, an upload, or an automatic favicon or server icon) has a size slider under it, from 50% to 200%, with a preview of how it sits in a group's circle and on a card. Bigger than 100% fills more of the circle; anything past the edge is cut off at the circle.
 
 Favicons and image URLs are downloaded by the add-on and stored in its database, so the browser never has to reach the site (useful when Home Assistant is served over HTTPS and the site is plain HTTP, or only reachable from the add-on). The add-on checks for a favicon in the page's `<link rel="icon">` tags, then the site's home page, then `/favicon.ico`. Icons are refreshed weekly; saving the monitor fetches its icon again straight away.
 
