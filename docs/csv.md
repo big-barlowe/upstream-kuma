@@ -198,7 +198,7 @@ The remaining columns are the settings of particular monitor types. A filled-in 
 | `community` | The read-only community. Blank = `public`. Exported as plain text, so treat an export with SNMP monitors like a password. |
 | `snmp_oids` | Extra values to read and show, as `Label = OID`, separated by `;` or new lines, e.g. `Temperature = 1.3.6.1.4.1.9.9.13.1.3.1.3.1; Fan = 1.3.6.1.4.1.9.9.13.1.4.1.3.1`. |
 | `snmp_hide` | What **Customize** left off the monitor's page, separated by `\|`: `fact:contact`, `fact:objectId` (also `name`, `location`, `uptime`, `descr`), `if:<interface name>`, `res:cpu`, `res:<memory or disk name>`, `section:interfaces`, `section:resources`, `section:values`. |
-| `snmp_card` | Up to two values for the card in the Falls, separated by `\|`: `name`, `location`, `uptime`, `ifs` (links up), `cpu`, `memory`, `disk:<name>`, `if:<interface name>` (its traffic), `value:<OID>` (one of `snmp_oids`). Blank = name and links up. |
+| `snmp_card` | Up to two values for the card in Flows, separated by `\|`: `name`, `location`, `uptime`, `ifs` (links up), `cpu`, `memory`, `disk:<name>`, `if:<interface name>` (its traffic), `value:<OID>` (one of `snmp_oids`). Blank = name and links up. |
 
 ### `push`
 

@@ -22,21 +22,21 @@ const ui = {
   route: null,
   chartHours: storage('chartHours', 24),
   drag: null,
-  focus: null, // falls diagram: monitor whose upstream/downstream is shown
-  info: null,  // falls diagram: monitor whose details panel is open
+  focus: null, // Flows diagram: monitor whose upstream/downstream is shown
+  info: null,  // Flows diagram: monitor whose details panel is open
   tagFilter: new Set(storage('tagFilter', [])), // tag ids
   tagMatch: storage('tagMatch', 'any'), // 'any' of the filter's tags (union) or 'all' of them (intersection)
   tagExpr: storage('tagExpr', ''), // advanced filter (filter.js); replaces the pills while set
   exprOpen: false,                 // where the advanced filter's editor is open: 'side', 'falls' or false
-  fallsFilter: false,              // the filter panel under the Falls title is open
-  // Monitors picked for tagging or moving, in the Falls or the monitor list.
+  fallsFilter: false,              // the filter panel under the Flows title is open
+  // Monitors picked for tagging or moving, in Flows or the monitor list.
   selected: new Set(),
   selFrom: new Map(), // id -> the parent of the list row it was picked under
-  selectMode: false,  // falls diagram: clicks select instead of focusing
+  selectMode: false,  // Flows diagram: clicks select instead of focusing
   tagDownstream: false, // selection bar: also tag everything below; unticked for each new selection
-  flowView: {},       // falls diagram zoom and position, kept across visits
+  flowView: {},       // Flows diagram zoom and position, kept across visits
   popout: null,       // 'side' or 'falls': popped out to fill the window
-  fallsHeight: storage('fallsHeight', null), // dragged height of the Falls map; null = automatic
+  fallsHeight: storage('fallsHeight', null), // dragged height of the Flows map; null = automatic
   fallsLayout: storage('fallsLayout', 'rings'), // 'rings' (default) or 'tree'
   snmpAllIfs: false,               // SNMP interfaces: list disabled ones and loopbacks too
   snmpEdit: false,                 // SNMP sections in customize mode (hide items, pick the card)
@@ -102,7 +102,7 @@ function pillsExpr() {
 
 // ---- selection --------------------------------------------------------------
 
-// Shared by the Falls and the monitor list. Only monitors that exist and
+// Shared by Flows and the monitor list. Only monitors that exist and
 // pass the tag filter stay selected, so nothing hidden gets tagged or moved.
 function pruneSelection() {
   const vis = filterView();
@@ -124,7 +124,7 @@ function setSelection(ids) {
 }
 
 // `from` is the parent of the list row it was picked under (undefined from
-// the Falls, where a monitor isn't under one particular parent).
+// Flows, where a monitor isn't under one particular parent).
 function toggleSelected(id, from) {
   if (!session.admin) return;
   if (ui.selected.has(id)) ui.selected.delete(id);
@@ -430,7 +430,7 @@ function renderTagFilter() {
   tagFilterControls(box, 'side');
 }
 
-// The tag filter's controls, in the sidebar ('side') or the Falls' filter
+// The tag filter's controls, in the sidebar ('side') or Flows' filter
 // panel ('falls'): tag pills with any/all, or the advanced filter.
 function tagFilterControls(box, where) {
   if (ui.exprOpen === where) return exprEditor(box);
@@ -468,7 +468,7 @@ function tagFilterControls(box, where) {
     h('a', { class: 'linkish admin-only', href: '#/settings/tags' }, 'Manage'));
 }
 
-// Opens the editor in the sidebar or in the Falls' filter panel. Only one is
+// Opens the editor in the sidebar or in Flows' filter panel. Only one is
 // open at a time, since they share element ids.
 function openExprEditor(where = 'side') {
   ui.exprOpen = where;
@@ -480,14 +480,14 @@ function openExprEditor(where = 'side') {
   input?.setSelectionRange(input.value.length, input.value.length);
 }
 
-// Back to the pills (the Falls' panel stays open).
+// Back to the pills (Flows' panel stays open).
 function closeExprEditor() {
   ui.exprOpen = false;
   renderTagFilter();
   renderFallsFilter();
 }
 
-// The panel under the Falls title: the same controls as the sidebar,
+// The panel under the Flows title: the same controls as the sidebar,
 // straight into the advanced filter if that is the one in use.
 function openFallsFilter() {
   if (ui.tagExpr) return openExprEditor('falls');
@@ -621,7 +621,7 @@ function row(m, parentId, path, depth, hasKids) {
     },
   }, hasKids ? (open ? '▾' : '▸') : ''),
   ui.editMode ? h('span', { class: 'grip', 'aria-hidden': 'true' }, '⠿') : null,
-  // A click traces the monitor in the Falls with its details open, as a
+  // A click traces the monitor in Flows with its details open, as a
   // click there would; the details have a link to its full page. On a
   // monitor's full page (or its All data), it opens that monitor's page.
   h('a', {
@@ -634,7 +634,7 @@ function row(m, parentId, path, depth, hasKids) {
         toggleSelected(m.id, parentId);
         return;
       }
-      // Already on the Falls: no re-route, so the diagram animates over.
+      // Already on Flows: no re-route, so the diagram animates over.
       if (ui.route?.name !== 'dashboard') return;
       e.preventDefault();
       if (ui.popout === 'side') setPopout(null);
@@ -674,7 +674,7 @@ function row(m, parentId, path, depth, hasKids) {
 // What dragging (or ⇅ on) a row moves: the row's monitor, or the whole
 // selection when the row is part of it. `from` maps each id to the parent
 // it is moved away from (undefined = all of them, for monitors picked in
-// the Falls).
+// Flows).
 function dragSet(id, parentId) {
   const ids = ui.selected.has(id) && ui.selected.size > 1 ? [...ui.selected] : [id];
   const from = new Map(ids.map((x) => [x, ui.selFrom.get(x)]));
@@ -755,7 +755,7 @@ function renderTreeSelect() {
       h('strong', null, `${n} selected`),
       ui.editMode ? h('button', { class: 'btn small', onclick: () => moveDialog(selectionSet()) }, 'Move…') : null,
       h('button', { class: 'btn small ghost', onclick: () => setSelection([]) }, 'Clear')),
-    h('p', { class: 'muted small' }, ui.editMode ? 'Drag any of them to move them all.' : 'Shift-click to add or remove more. Tag them in the Falls, or move them with Edit.'));
+    h('p', { class: 'muted small' }, ui.editMode ? 'Drag any of them to move them all.' : 'Shift-click to add or remove more. Tag them in Flows, or move them with Edit.'));
 }
 
 // ---- layout: list width and pop-out -------------------------------------------
@@ -809,7 +809,7 @@ function initSideResize() {
   });
 }
 
-// The gap between the Falls and Recent events: drag it to set the map's
+// The gap between Flows and Recent events: drag it to set the map's
 // height, double-click for automatic again.
 function fallsResizer() {
   const setH = (px, save) => {
@@ -822,9 +822,9 @@ function fallsResizer() {
     class: 'falls-resize',
     role: 'separator',
     'aria-orientation': 'horizontal',
-    'aria-label': 'Height of the Falls',
+    'aria-label': 'Height of Flows',
     tabindex: 0,
-    title: 'Drag to resize the Falls. Double-click for automatic.',
+    title: 'Drag to resize Flows. Double-click for automatic.',
     onpointerdown: (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
@@ -865,19 +865,19 @@ function paintPopButton(btn, which, name) {
   if (!btn) return;
   const on = ui.popout === which;
   btn.setAttribute('aria-pressed', String(on));
-  btn.title = on ? 'Back to the normal view (Esc)' : `Pop out the ${name}`;
+  btn.title = on ? 'Back to the normal view (Esc)' : `Pop out ${name}`;
   btn.setAttribute('aria-label', btn.title);
   fill(btn, popIcon(!on));
 }
 
-// Pop the monitor list or the Falls out to fill the window (null = neither).
+// Pop the monitor list or Flows out to fill the window (null = neither).
 function setPopout(which) {
   ui.popout = which;
   document.body.classList.toggle('popout', Boolean(which));
   document.body.classList.toggle('popout-side', which === 'side');
   document.body.classList.toggle('popout-falls', which === 'falls');
-  paintPopButton($('#side-pop'), 'side', 'monitor list');
-  paintPopButton($('#falls-pop'), 'falls', 'Falls');
+  paintPopButton($('#side-pop'), 'side', 'the monitor list');
+  paintPopButton($('#falls-pop'), 'falls', 'Flows');
   flow?.setExpanded(which === 'falls' || ui.phone);
   $('#tab-list').setAttribute('aria-pressed', String(which === 'side'));
 }
@@ -932,7 +932,7 @@ function swipeAway(el, close) {
 
 // ---- phones -------------------------------------------------------------------
 // Narrow screens (and phones on their side) get their own layout (body.phone in
-// style.css): the counts at the top, a menu at the bottom, the Falls filling
+// style.css): the counts at the top, a menu at the bottom, Flows filling
 // everything between, and the monitor list, the filter and a monitor's details
 // as sheets over it.
 
@@ -946,8 +946,8 @@ function applyPhone() {
 }
 
 function initPhone() {
-  $('#tab-falls').append(sourceMark(), h('span', { class: 'sr-only' }, 'The Falls'));
-  // The middle button: to the Falls, and once there, back to everything.
+  $('#tab-falls').append(sourceMark(), h('span', { class: 'sr-only' }, 'Flows'));
+  // The middle button: to Flows, and once there, back to everything.
   $('#tab-falls').addEventListener('click', (e) => {
     if (ui.route?.name !== 'dashboard') return; // the link takes you there
     e.preventDefault();
@@ -996,7 +996,7 @@ async function renderDashboard(isUpdate = false) {
       h('div', { class: 'stat-row', id: 'dash-stats' }),
       h('section', { class: 'card falls' },
         h('div', { class: 'card-head' },
-          h('div', { class: 'falls-title' }, h('h2', null, 'The Falls'), h('div', { id: 'flow-focus', class: 'flow-focus', 'aria-live': 'polite' })),
+          h('div', { class: 'falls-title' }, h('h2', null, 'Flows'), h('div', { id: 'flow-focus', class: 'flow-focus', 'aria-live': 'polite' })),
           h('div', { id: 'flow-filter-pop', class: 'expr-pop', role: 'group', 'aria-label': 'Tag filter', hidden: true }),
           h('div', { class: 'falls-tools' },
             h('div', { class: 'legend' },
@@ -1027,7 +1027,7 @@ async function renderDashboard(isUpdate = false) {
       h('section', { class: 'card' },
         h('div', { class: 'card-head' }, h('h2', null, 'Recent events')),
         h('div', { id: 'dash-events' }))));
-    paintPopButton($('#falls-pop'), 'falls', 'Falls');
+    paintPopButton($('#falls-pop'), 'falls', 'Flows');
     swipeAway($('#flow-info'), () => setFocus(ui.focus, null));
     swipeAway($('#flow-filter-pop'), closeFallsFilter);
   }
@@ -1316,7 +1316,7 @@ async function renderDetail(id, isUpdate = false) {
   const m = state.byId.get(id);
   const main = $('#main');
   if (!m) {
-    if (state.loaded) fill(main, h('div', { class: 'card' }, h('p', null, 'Monitor not found.'), h('a', { href: '#/' }, 'Back to the falls')));
+    if (state.loaded) fill(main, h('div', { class: 'card' }, h('p', null, 'Monitor not found.'), h('a', { href: '#/' }, 'Back to Flows')));
     return;
   }
   if (detailCache.id !== id) detailCache = { id, at: 0, uptime: null, events: [], chartKey: '', watch: null, watchKey: '' };
@@ -1354,7 +1354,7 @@ async function renderDetail(id, isUpdate = false) {
           class: 'btn',
           title: 'Show what this depends on and what depends on it',
           onclick: () => go(`#/?focus=${id}`),
-        }, 'Trace in Falls'),
+        }, 'Trace in Flows'),
         session.admin ? [
         h('button', { class: 'btn', onclick: () => action(`monitors/${id}/${m.active ? 'pause' : 'resume'}`, m.active ? 'Paused' : 'Resumed') }, m.active ? 'Pause' : 'Resume'),
         h('a', { class: 'btn', href: `#/add?parent=${id}` }, '+ Dependent'),
@@ -1572,7 +1572,7 @@ async function renderTags(box) {
         t.count
           ? h('button', {
             class: 'btn small',
-            title: `Show the monitors tagged ${t.name} in the Falls`,
+            title: `Show the monitors tagged ${t.name} in Flows`,
             onclick: () => {
               setTagFilter([t.id]);
               go('#/');
@@ -1605,7 +1605,7 @@ async function renderTags(box) {
           },
         }, 'Edit order') : null,
         h('button', { class: 'btn primary', onclick: () => newTagDialog(tags, reload) }, '+ New tag')),
-      h('p', { class: 'muted' }, 'Group monitors across the hierarchy, by site, owner or anything else. Give a tag an icon to use it for every monitor that carries it. Filter by tag in the sidebar: pick several tags and choose whether a monitor needs any of them or all of them, or use Advanced for combinations like Switch & (Home | Cabin). To tag several monitors at once, select them: shift-click them in the Falls or the monitor list, or shift-drag a box in the Falls.')),
+      h('p', { class: 'muted' }, 'Group monitors across the hierarchy, by site, owner or anything else. Give a tag an icon to use it for every monitor that carries it. Filter by tag in the sidebar: pick several tags and choose whether a monitor needs any of them or all of them, or use Advanced for combinations like Switch & (Home | Cabin). To tag several monitors at once, select them: shift-click them in Flows or the monitor list, or shift-drag a box in Flows.')),
     tags.length
       ? h('div', { class: 'card tag-list' }, tags.map(editor))
       : h('div', { class: 'card' }, h('p', { class: 'muted' }, 'No tags yet.'))));
@@ -1839,7 +1839,7 @@ function csvCard() {
       const r = await api('csv/import', { method: 'POST', body: { csv: text, mode } });
       if (!r.applied) return check();
       toast(`Imported: ${counts(r, ['added', 'updated'])}`, 'success');
-      fill(result, h('div', { class: 'csv-box ok' }, h('strong', null, `Done: ${counts(r, ['added', 'updated'])}.`), ' ', h('a', { href: '#/' }, 'See them in the Falls →')));
+      fill(result, h('div', { class: 'csv-box ok' }, h('strong', null, `Done: ${counts(r, ['added', 'updated'])}.`), ' ', h('a', { href: '#/' }, 'See them in Flows →')));
       text = null;
       fileInput.value = '';
       refresh();
@@ -1946,7 +1946,7 @@ async function route() {
     if (r.name === 'dashboard') await renderDashboard();
     else if (r.name === 'monitor') await renderDetail(r.id);
     else if (r.name === 'snmp') await renderSnmpBrowser($('#main'), state.byId.get(r.id), { pick: r.pick, navigate: go });
-    else if ((r.name === 'edit' || r.name === 'add') && !session.admin) fill($('#main'), h('div', { class: 'card' }, h('p', null, 'Only an admin can add or change monitors.'), h('a', { href: '#/' }, 'Back to the falls')));
+    else if ((r.name === 'edit' || r.name === 'add') && !session.admin) fill($('#main'), h('div', { class: 'card' }, h('p', null, 'Only an admin can add or change monitors.'), h('a', { href: '#/' }, 'Back to Flows')));
     else if (r.name === 'edit') await renderMonitorForm($('#main'), { state, id: r.id, navigate: go });
     else if (r.name === 'add') await renderMonitorForm($('#main'), { state, presetParent: r.parent, navigate: go });
     else if (r.name === 'alerts') await renderAlerts();
@@ -1976,7 +1976,7 @@ $('#search').addEventListener('input', (e) => {
   renderTree();
 });
 window.addEventListener('hashchange', route);
-// The Falls' filter panel closes when you click elsewhere.
+// Flows' filter panel closes when you click elsewhere.
 document.addEventListener('pointerdown', (e) => {
   if (ui.fallsFilter && !e.target.closest('#flow-filter-pop, .falls-filter-btn')) closeFallsFilter();
 });
@@ -1985,7 +1985,7 @@ document.addEventListener('keydown', (e) => {
   if (ui.exprOpen) return closeExprEditor();
   if (ui.fallsFilter) return closeFallsFilter();
   if (ui.selected.size) return setSelection([]);
-  // Undo the Falls' own state first, unless only the list is in view.
+  // Undo Flows' own state first, unless only the list is in view.
   if (ui.route?.name === 'dashboard' && ui.popout !== 'side') {
     if (ui.selectMode) {
       ui.selectMode = false;

@@ -217,8 +217,8 @@ async function render(error = params.get('error')) {
 
 // Every few seconds a stream flows out of the node, drawing itself outward
 // as it meanders down and away (behind the card), flows for a while, and
-// fades. Drawn like the Falls' streams: a bed, moving water, foam. As in the
-// Falls, they run between the node's rim and its water, so they come out of
+// fades. Drawn like Flows' streams: a bed, moving water, foam. As in the
+// Flows, they run between the node's rim and its water, so they come out of
 // the water; the node is drawn here, and #login-node only keeps its place.
 const STILL = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const host = document.getElementById('login-streams');

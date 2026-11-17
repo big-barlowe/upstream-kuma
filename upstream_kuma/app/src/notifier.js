@@ -60,7 +60,7 @@ async function post(url, body, headers = {}) {
 // Google Chat takes only its own message format, so a generic webhook pointed
 // at it sends that too. An alert is a card: the status, its details, and the
 // flow it sits in (the monitors above it, it, and what it cut off, drawn as an
-// indented tree in the Falls' colours), with a link to the monitor when
+// indented tree in Flows' colours), with a link to the monitor when
 // Upstream Kuma knows its address.
 const isGoogleChat = (url) => {
   try {

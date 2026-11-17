@@ -152,13 +152,13 @@ export function iconChooser({ id, label = 'Icon', spec = '', modes, current = nu
     if (mode === 'auto') return iconEl(autoPreview(), 30);
     return null;
   };
-  // A group's circle and a card's badge, as the Falls draws them.
+  // A group's circle and a card's badge, as Flows draws them.
   const sizer = () => {
     const src = imageSrc();
     if (size == null || !src) return null;
     const disc = (cls) => h('span', { class: `icon-disc ${cls}`, 'aria-hidden': 'true' },
       h('img', { src, alt: '', style: { transform: `scale(${sizePct / 100})` } }));
-    const discs = h('div', { class: 'icon-discs', title: 'How it looks in the Falls: as a group, and on a card' }, disc('group'), disc('badge'));
+    const discs = h('div', { class: 'icon-discs', title: 'How it looks in Flows: as a group, and on a card' }, disc('group'), disc('badge'));
     const out = h('output', { class: 'icon-size-val', for: `${id}-size` }, `${sizePct}%`);
     const set = (v) => {
       sizePct = v;

@@ -1,7 +1,7 @@
-// What an SNMP monitor collected (GET api/monitors/:id/data), for the Falls'
+// What an SNMP monitor collected (GET api/monitors/:id/data), for Flows'
 // details panel (snmpSummary), the monitor's page (snmpSections) and the
 // "All data" browser (renderSnmpBrowser). How it is shown (extra OIDs,
-// hidden items, what the Falls card says) is the monitor's `display`, saved
+// hidden items, what its card in Flows says) is the monitor's `display`, saved
 // with PUT api/monitors/:id/snmp-display.
 import { api, h, fill, fmtAgo, toast, confirmDialog, session } from './util.js';
 import { oidName, oidGroup } from './snmp-names.js';
@@ -117,7 +117,7 @@ function stale(at, interval) {
   return at && Date.now() - at > (interval * 2 + 30) * 1000;
 }
 
-// ---- Falls details panel ----------------------------------------------------
+// ---- Flows details panel ----------------------------------------------------
 
 export function snmpSummary(m, snap) {
   const d = snap?.data;
@@ -169,7 +169,7 @@ export function snmpSections(m, snap, opts) {
   const toggleCard = (key) => save({ card: onCard(display, key) ? display.card.filter((k) => k !== key) : [...display.card, key] });
   const full = display.card.length >= CARD_MAX;
 
-  // Edit controls: hide/show, and put on (or take off) the Falls card.
+  // Edit controls: hide/show, and put on (or take off) its card in Flows.
   const hideBtn = (key) => h('button', { class: 'snmp-ctl', onclick: () => toggleHide(key), title: isHidden(display, key) ? 'Show it on this page again' : 'Hide it from this page' },
     isHidden(display, key) ? 'Show' : 'Hide');
   const cardBtn = (key) => {
@@ -178,7 +178,7 @@ export function snmpSections(m, snap, opts) {
       class: `snmp-ctl card${on ? ' on' : ''}`,
       'aria-pressed': String(on),
       disabled: !on && full,
-      title: on ? 'Take it off the card in the Falls' : full ? `The card shows at most ${CARD_MAX} values` : 'Show it on the card in the Falls',
+      title: on ? 'Take it off the card in Flows' : full ? `The card shows at most ${CARD_MAX} values` : 'Show it on the card in Flows',
       onclick: () => toggleCard(key),
     }, on ? '✓ Card' : '+ Card');
   };
@@ -198,7 +198,7 @@ export function snmpSections(m, snap, opts) {
       [h('span', { class: `muted small${old ? ' snmp-stale' : ''}` }, `${old ? 'last ' : ''}collected ${fmtAgo(snap.at)}`)],
       [browse, customize]),
     editing ? h('div', { class: 'snmp-edit-note' },
-      h('div', null, h('strong', null, 'Falls card: '), h('span', { class: 'snmp-card-preview' }, m.msg || '—')),
+      h('div', null, h('strong', null, 'Flows card: '), h('span', { class: 'snmp-card-preview' }, m.msg || '—')),
       h('div', { class: 'muted small' }, `Hide what you don’t need on this page, and pick up to ${CARD_MAX} values for the card with + Card. With none picked, the card shows the name and how many links are up. For more values, use All data.`)) : null,
     h('dl', { class: 'snmp-grid' },
       fact('name', 'Name', d.system.name, { card: true }),
@@ -509,7 +509,7 @@ export async function renderSnmpBrowser(main, m, { pick = null, navigate = (hash
       h('td', { class: 'muted small', title: obj?.type ?? '' }, obj?.type?.replace(/ \(.*\)$/, '') ?? e.type),
       h('td', { class: 'snmp-row-ctls' }, h('span', { class: 'snmp-ctls' },
         h('button', { class: `snmp-ctl${isPinned ? ' on' : ''}`, 'aria-pressed': String(isPinned), title: isPinned ? 'Take it off the monitor’s page' : 'Show it on the monitor’s page, under Values', onclick: () => togglePage(e, name) }, isPinned ? '✓ Page' : '+ Page'),
-        h('button', { class: `snmp-ctl card${isCard ? ' on' : ''}`, 'aria-pressed': String(isCard), disabled: !isCard && full, title: isCard ? 'Take it off the card in the Falls' : full ? `The card shows at most ${CARD_MAX} values` : 'Show it on the card in the Falls', onclick: () => toggleCard(e, name) }, isCard ? '✓ Card' : '+ Card'),
+        h('button', { class: `snmp-ctl card${isCard ? ' on' : ''}`, 'aria-pressed': String(isCard), disabled: !isCard && full, title: isCard ? 'Take it off the card in Flows' : full ? `The card shows at most ${CARD_MAX} values` : 'Show it on the card in Flows', onclick: () => toggleCard(e, name) }, isCard ? '✓ Card' : '+ Card'),
         e.value != null ? h('button', { class: `snmp-ctl problem${pick ? ' picking' : ''}`, title: 'Use it in a problem definition: alert when it has certain values', onclick: () => usePick(e, name, obj) }, '+ Problem') : null))));
     if (open) {
       const item = (label, value) => (value ? h('div', null, h('dt', null, label), h('dd', null, value)) : null);
@@ -556,7 +556,7 @@ export async function renderSnmpBrowser(main, m, { pick = null, navigate = (hash
       h('div', null,
         h('div', { class: 'crumbs' }, h('a', { href: `#/monitor/${m.id}` }, `← ${m.name}`)),
         h('h1', null, 'All SNMP data'),
-        h('p', { class: 'muted' }, `Everything ${m.name} reports, read live. Click a name for what it means.${session.admin ? ` + Page adds a value to the monitor’s page, + Card to its card in the Falls (at most ${CARD_MAX}), + Problem to a problem definition, to alert on it.` : ''}`)),
+        h('p', { class: 'muted' }, `Everything ${m.name} reports, read live. Click a name for what it means.${session.admin ? ` + Page adds a value to the monitor’s page, + Card to its card in Flows (at most ${CARD_MAX}), + Problem to a problem definition, to alert on it.` : ''}`)),
       h('div', { class: 'actions' },
         session.admin ? uploadButton(reread) : null,
         h('a', { class: 'btn ghost admin-only', href: '#/settings/mibs', title: 'MIB library (Settings)' }, 'MIBs'),

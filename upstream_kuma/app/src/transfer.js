@@ -50,7 +50,7 @@ export const CSV_COLUMNS = [
   { name: 'community', config: 'community', types: ['snmp'], help: 'SNMP read community. Blank = public. Exported as plain text.' },
   { name: 'snmp_oids', config: 'oids', types: ['snmp'], help: 'Extra values to read, as Label = OID, separated by ; or new lines.' },
   { name: 'snmp_hide', config: 'hide', types: ['snmp'], kind: 'list', help: 'Items left off the monitor’s page, separated by |, e.g. if:Gi1/0/48 | section:resources.' },
-  { name: 'snmp_card', config: 'card', types: ['snmp'], kind: 'list', help: 'Up to 2 values the card in the Falls shows, separated by |, e.g. cpu | if:eth0. Blank = name and links up.' },
+  { name: 'snmp_card', config: 'card', types: ['snmp'], kind: 'list', help: 'Up to 2 values the card in Flows shows, separated by |, e.g. cpu | if:eth0. Blank = name and links up.' },
   { name: 'push_token', types: ['push'], help: 'The secret in the push URL. Keep it to keep the URL the same on another install; blank = generate a new one.' },
 ];
 const COLUMN = new Map(CSV_COLUMNS.map((c) => [c.name, c]));

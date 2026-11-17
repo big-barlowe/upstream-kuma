@@ -260,7 +260,7 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
   });
 
   // The same for several monitors at once: moves = [{id, fromParentId}].
-  // Without a fromParentId (selected in the Falls, not under one particular
+  // Without a fromParentId (selected in Flows, not under one particular
   // parent) a move replaces all of the monitor's parents. A monitor whose
   // parent is moving too stays under it, so moved subtrees keep their shape.
   route('POST', '/api/monitors/move', ({ body }) => {

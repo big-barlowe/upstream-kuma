@@ -56,7 +56,7 @@ const OPER = { 1: 'up', 2: 'down', 3: 'testing', 4: 'unknown', 5: 'dormant', 6: 
 const IF_TYPES = { 1: 'Other', 6: 'Ethernet', 24: 'Loopback', 53: 'Virtual', 71: 'Wi-Fi', 117: 'Ethernet', 131: 'Tunnel', 135: 'VLAN', 136: 'VLAN', 161: 'LAG', 209: 'Bridge' };
 
 // Config keys that only change what is shown, not what is checked: extra
-// OIDs, items hidden from the monitor's page, and what the Falls card shows.
+// OIDs, items hidden from the monitor's page, and what its card in Flows shows.
 export const DISPLAY_KEYS = ['oids', 'hide', 'card'];
 export const CARD_MAX = 2;
 
@@ -179,7 +179,7 @@ export async function checkSnmp(monitor, { previous, probe = [] } = {}) {
   }
 }
 
-// ---- the Falls card --------------------------------------------------------
+// ---- Flows card --------------------------------------------------------
 
 const compact = (n, unit = '') => {
   if (n == null) return '—';
@@ -235,7 +235,7 @@ export function cardItem(data, key, config) {
   }
 }
 
-// What the card in the Falls shows (and the check's message): the picked
+// What the card in Flows shows (and the check's message): the picked
 // items, or how many interfaces are up.
 export function cardText(data, config) {
   const keys = config?.card?.length ? config.card : ['name', 'ifs'];

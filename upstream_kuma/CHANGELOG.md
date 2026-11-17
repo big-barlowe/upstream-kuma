@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.20.11
+
+- **The Falls is now called Flows**: in the menu, the heading, the phone's tab bar, **Trace in Flows** on a monitor's page, tooltips, help text and the docs. Nothing else changes, and your saved layout, height and zoom are kept.
+
 ## 0.20.10
 
 - **Fixed: single sign-on from the home-screen app ended up in the wrong place.** On an iPhone, the provider's page opened in a separate browser view, and after signing in Upstream Kuma loaded inside that view instead of the app, which stayed signed out. Now the app opens the sign-in in a window of its own and waits, and signs in once you're through. That view on an iPhone has its own cookies, so it asks you to confirm first, showing a 4-digit code the app shows too: a link someone sent you can't sign their app in as you. In a normal browser nothing changes.

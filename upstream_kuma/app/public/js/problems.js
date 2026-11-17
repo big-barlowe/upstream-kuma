@@ -13,7 +13,7 @@ const SEV_KEYS = Object.keys(SEVERITIES);
 
 export const sevBadge = (sev) => h('span', { class: `sev-badge sev-${sev}` }, SEVERITIES[sev]?.label ?? sev);
 
-// The highest severity among a monitor's open value problems, for the Falls
+// The highest severity among a monitor's open value problems, for Flows
 // and the list. Only while it's up: otherwise the value is stale, and its
 // status already says more.
 export function monitorSeverity(m, open) {
@@ -511,7 +511,7 @@ export function renderProblemsSection(box, { state, problems, onChanged, draft =
       },
     }, SEVERITIES[k].label)));
     paintSev();
-    const SEV_HELP = { info: 'Listed under Unresolved; nothing changes in the Falls.', warning: 'Its monitor pulses yellow in the Falls.', severe: 'Its monitor pulses red in the Falls.' };
+    const SEV_HELP = { info: 'Listed under Unresolved; nothing changes in Flows.', warning: 'Its monitor pulses yellow in Flows.', severe: 'Its monitor pulses red in Flows.' };
     return h('form', {
       class: 'card form problem-form',
       onsubmit: (e) => {

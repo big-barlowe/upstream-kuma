@@ -23,7 +23,7 @@
   --blocked: #64748b;
   --paused: #8b80c9;
 
-  /* problem severity (problems.js); warning and severe pulse in the Falls */
+  /* problem severity (problems.js); warning and severe pulse in Flows */
   --sev-info: #7dd3fc;
   --sev-warning: #facc15;
   --sev-severe: #ef4444;
@@ -81,7 +81,7 @@ kbd { background: var(--panel-2); border: 1px solid var(--border); border-radius
 .brand { display: flex; align-items: center; flex-shrink: 0; border-radius: 10px; }
 .brand:hover { text-decoration: none; }
 .brand-mark { display: block; height: 42px; width: auto; overflow: visible; }
-/* the stream in the mark moves like the Falls' streams (water and foam),
+/* the stream in the mark moves like Flows' streams (water and foam),
    at the same speed for its size */
 .brand-bed { fill: none; stroke: #153443; stroke-width: 24; stroke-linecap: round; }
 .brand-stream { fill: none; stroke: #03c1f5; stroke-width: 9; stroke-linecap: round; }
@@ -161,7 +161,7 @@ kbd { background: var(--panel-2); border: 1px solid var(--border); border-radius
 body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none; }
 body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: none; }
 
-/* the gap between the Falls and Recent events */
+/* the gap between Flows and Recent events */
 .falls-resize { height: 16px; margin: -16px 0; position: relative; z-index: 1; cursor: row-resize; touch-action: none; outline: none; }
 .falls-resize::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 3px; margin-top: -1.5px; border-radius: 2px; background: var(--water); opacity: 0; transition: opacity 0.15s; }
 .falls-resize:hover::after, .falls-resize:focus-visible::after, body.resizing-v .falls-resize::after { opacity: 0.6; }
@@ -291,7 +291,7 @@ textarea { font-family: var(--mono); font-size: 0.85rem; resize: vertical; }
 .pop-btn { flex: none; width: 32px; padding: 0; display: grid; place-items: center; }
 .pop-btn svg path { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 
-/* Pop-out: the monitor list or the Falls fills the window. */
+/* Pop-out: the monitor list or Flows fills the window. */
 body.popout { overflow: hidden; }
 body.popout-side .side, body.popout-falls .falls {
   position: fixed;
@@ -320,9 +320,9 @@ body.popout-falls .flow-select { position: static; }
 .side > .tree { flex: 1 1 auto; min-height: 120px; overflow: auto; margin: 0 -6px; padding: 0 6px; }
 .tree .branch.root { width: max-content; min-width: 100%; }
 
-/* Each level is drawn like a stream in the Falls, running down under the
+/* Each level is drawn like a stream in Flows, running down under the
    parent's twisty: a soft bed, rounded water dashes and foam (::after), at
-   the same sizes and speeds as the Falls' bed, water and foam. */
+   the same sizes and speeds as Flows' bed, water and foam. */
 .branch { position: relative; }
 .branch:not(.root) { padding-left: 16px; }
 .branch:not(.root)::before,
@@ -422,7 +422,7 @@ body.popout-falls .flow-select { position: static; }
 .key.flow::before { background: var(--water); box-shadow: 0 0 6px var(--water); }
 .key.dry::before { background: repeating-linear-gradient(90deg, rgba(248, 113, 113, 0.75) 0 4px, transparent 4px 7px); }
 .key.still::before { background: var(--blocked); }
-/* The Falls is a map: drag to pan, ctrl/⌘ + scroll or pinch to zoom. */
+/* Flows is a map: drag to pan, ctrl/⌘ + scroll or pinch to zoom. */
 .flow-map { position: relative; overflow: hidden; border-radius: 12px; background: rgba(4, 17, 31, 0.35); border: 1px solid var(--border-soft); }
 .flow-map { cursor: grab; touch-action: none; }
 /* The diagram and the source's layers are drawn at their own size and moved
@@ -681,7 +681,7 @@ button.tag-pill:hover { border-color: var(--tag); background: color-mix(in srgb,
   .tag-item-meta { justify-content: flex-start; }
 }
 
-/* tags and selection in the falls */
+/* tags and selection in Flows */
 .falls-tools { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; }
 #select-toggle[aria-pressed="true"] { border-color: var(--water); background: rgba(56, 189, 248, 0.18); }
 .filter-chip { gap: 6px; padding: 2px 4px 2px 5px; }
@@ -1095,7 +1095,7 @@ table.csv-columns { width: 100%; border-collapse: collapse; font-size: 0.82rem; 
 .sev-pick { display: flex; gap: 6px; flex-wrap: wrap; }
 .sev-help { display: flex; flex-direction: column; gap: 1px; margin: 6px 0 0; }
 
-/* in the Falls: an up monitor with an open warning/severe problem pulses */
+/* in Flows: an up monitor with an open warning/severe problem pulses */
 .flow-svg .node.up.sev-warning .pool { stroke: var(--sev-warning); fill: #262109; } /* pulse on the canvas */
 .flow-svg .node.up.sev-severe .pool { stroke: var(--sev-severe); fill: #2a1218; }
 .flow-svg .node.up.sev-warning .sub { fill: #fde68a; }
@@ -1210,7 +1210,7 @@ table.csv-columns { width: 100%; border-collapse: collapse; font-size: 0.82rem; 
 .reading-where-note { color: var(--faint); font-family: var(--font); }
 
 /* ---- phones (body.phone, set from app.js) -------------------------------------
-   The counts at the top, a menu at the bottom, the Falls filling everything
+   The counts at the top, a menu at the bottom, Flows filling everything
    between, and the monitor list, the filter and a monitor's details as sheets
    over it. Bars clear the iPhone's notch and home indicator (safe areas). */
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -1310,7 +1310,7 @@ body.phone.popout-side .side {
 @keyframes sheet-in { from { opacity: 0; transform: translateY(14px); } }
 body.phone .tree .row { min-height: 40px; }
 
-/* the Falls fills the screen between the bars */
+/* Flows fills the screen between the bars */
 body.phone.on-falls { overflow: hidden; }
 body.phone .dashboard > .stat-row, body.phone .dashboard > .card:not(.falls) { display: none; }
 body.phone .falls {
@@ -1330,7 +1330,7 @@ body.phone .falls-body { position: relative; flex: 1 1 auto; min-height: 0; disp
 body.phone .falls-diagram { position: absolute; inset: 0; }
 body.phone .flow-map { position: absolute; inset: 0; border: 0; border-radius: 0; background: transparent; }
 body.phone #flow-empty { position: absolute; left: 0; right: 0; top: 25%; z-index: 3; }
-/* the Falls' bar floats over the map: what's traced and filtered, and Select */
+/* Flows' bar floats over the map: what's traced and filtered, and Select */
 body.phone .falls > .card-head { position: absolute; top: 8px; left: var(--ph-left); right: var(--ph-right); z-index: 6; display: flex; flex-wrap: nowrap; align-items: flex-start; justify-content: space-between; gap: 6px; margin: 0; padding: 0; pointer-events: none; }
 body.phone .falls-title { flex: 1 1 auto; }
 body.phone .falls-tools { flex: none; }
@@ -1395,7 +1395,7 @@ body.phone .settings-tabs::-webkit-scrollbar { display: none; }
 .settings-tabs a { flex: none; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--border-soft); background: var(--panel); color: var(--muted); font-size: 0.86rem; text-decoration: none; white-space: nowrap; }
 .settings-tabs a.on { color: var(--text); border-color: var(--water); background: rgba(56, 189, 248, 0.16); }
 
-/* Icon size (monitor form): the slider, and the icon as the Falls draws it,
+/* Icon size (monitor form): the slider, and the icon as Flows draws it,
    in a group's circle (the image is 64/92 of it) and a card's badge (18/30). */
 .icon-size { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-top: 10px; }
 .icon-discs { display: flex; align-items: center; gap: 12px; }
