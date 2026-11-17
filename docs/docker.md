@@ -2,7 +2,7 @@
 
 You don't need Home Assistant to use Upstream Kuma. It is published as a Docker image, `ghcr.io/big-barlowe/upstream-kuma`, and outside Home Assistant it runs as a standalone web app. Everything works the same, except:
 
-- **Home Assistant entity monitors** and the **Home Assistant notification channel** need a connection to a Home Assistant instance. See [Connecting to Home Assistant](#connecting-to-home-assistant-optional). All other monitor types (HTTP(S), TCP, ping, DNS, Minecraft, push, group) and notification channels (ntfy, Discord, Slack, Telegram, Pushover, Gotify, webhook, email) work on their own.
+- **Home Assistant entity monitors** and the **Home Assistant notification channel** need a connection to a Home Assistant instance. See [Connecting to Home Assistant](#connecting-to-home-assistant-optional). All other monitor types (HTTP(S), TCP, ping, DNS, Minecraft, push, group) and notification channels (ntfy, Discord, Slack, Google Chat, Telegram, Pushover, Gotify, webhook, email) work on their own.
 - **You sign in with an account.** Inside Home Assistant, HA handles sign-in. On its own, the first visit creates the admin account, and you add others (or single sign-on) in Settings → Users. See [Security](#security).
 
 Contents:

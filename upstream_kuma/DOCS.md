@@ -134,7 +134,7 @@ An alert goes to every channel of every rule that matches it, once per channel. 
 **Channels** are where alerts are delivered:
 
 - **Home Assistant**: any `notify.*` service (e.g. `notify.mobile_app_pixel`), or `persistent_notification.create`. This works with no setup when running as an add-on.
-- **ntfy, Discord, Slack, Telegram, Pushover, Gotify, Webhook, Email (SMTP)**: fill in the fields and use **Send test**.
+- **ntfy, Discord, Slack, Google Chat, Telegram, Pushover, Gotify, Webhook, Email (SMTP)**: fill in the fields and use **Send test**. For Google Chat, add a webhook to the space (**Apps & integrations → Webhooks**) and paste its URL. A **Webhook** posts the alert as JSON (`kind`, `title`, `message`, `time`, `monitor`, `problem`, `affected`), except to a Google Chat URL, which only takes Google Chat's own format.
 
 The webhook channel POSTs JSON: `{ kind, title, message, time, monitor, problem, affected: [{ id, name, depth }] }`. `kind` is `down`, `up`, `problem` (a problem opened) or `resolved` (it cleared); `problem` is its definition, `{ id, name, severity }`, for the last two. The other channels send severe problems as loudly as a monitor going down, and warnings a step below.
 

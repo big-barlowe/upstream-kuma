@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.20.4
+
+- **New notification channel: Google Chat.** Add a webhook to the space (Apps & integrations → Webhooks) and paste its URL. Alerts arrive as a bold title with the details below.
+- **Fixed: a Webhook channel pointed at Google Chat failed** with "Invalid JSON payload received. Unknown name "kind"". Google Chat only takes its own message format, so a webhook to a Google Chat URL now sends that.
+
 ## 0.20.3
 
 - **The Users page shows which single sign-on identity each account is linked to** (its email address, or its username, as the provider gave it at the last sign-in), under **Signs in with** and in the account's editor, and Settings → Account says who you signed in as. A link always wins over the email address, so an identity linked to the wrong account was hard to spot; now it shows, and **Unlink** fixes it. Accounts linked before this show their identity after their next sign-in.

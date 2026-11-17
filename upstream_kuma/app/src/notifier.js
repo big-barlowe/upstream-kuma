@@ -28,6 +28,25 @@ async function post(url, body, headers = {}) {
   }
 }
 
+// Google Chat takes only its own message format ({ text }, with *bold* and
+// ``` blocks; at most 4,096 characters), so a generic webhook pointed at it
+// sends that too.
+const isGoogleChat = (url) => {
+  try {
+    return new URL(url).hostname === 'chat.googleapis.com';
+  } catch {
+    return false;
+  }
+};
+
+function googleChatMessage(a) {
+  const head = `*${a.title}*\n`;
+  let body = a.message;
+  const room = 4096 - head.length - 8;
+  if (body.length > room) body = `${body.slice(0, room - 2)}\n…`;
+  return { text: `${head}\`\`\`${body}\`\`\`` };
+}
+
 function required(cfg, ...keys) {
   for (const k of keys) if (!cfg[k]) throw new Error(`Missing "${k}"`);
 }
@@ -96,6 +115,15 @@ export const providers = {
     },
   },
 
+  googlechat: {
+    label: 'Google Chat',
+    fields: [{ key: 'webhookUrl', label: 'Webhook URL', secret: true, help: 'In the space: Apps & integrations → Webhooks → Add webhook, then copy its URL' }],
+    async send(cfg, a) {
+      required(cfg, 'webhookUrl');
+      await post(cfg.webhookUrl, googleChatMessage(a));
+    },
+  },
+
   telegram: {
     label: 'Telegram',
     fields: [
@@ -150,6 +178,7 @@ export const providers = {
     fields: [{ key: 'url', label: 'URL' }],
     async send(cfg, a) {
       required(cfg, 'url');
+      if (isGoogleChat(cfg.url)) return post(cfg.url, googleChatMessage(a));
       await post(cfg.url, {
         kind: a.kind,
         title: a.title,

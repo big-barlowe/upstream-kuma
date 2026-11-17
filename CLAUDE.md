@@ -54,6 +54,7 @@ upstream_kuma/             the add-on (Supervisor build context)
     test/minecraft.test.js   Server List Ping against a fake server, SRV resolution
     test/snmp.test.js        BER round trip, checker against a fake agent (v1/v2c, tooBig, community), rates, engine data
     test/mib.test.js         MIB parsing/resolution, display hints, upload routes naming walk entries and card values
+    test/notifier.test.js    what providers send (Google Chat's format), with a stubbed fetch
     test/fake-snmp.js        the fake UDP agent both SNMP tests use (not a test file itself)
     test/move.test.js        bulk move route: ride-along subtrees, from-parent semantics, rollback
     test/tags.test.js        tag routes through createApi(), with a real Store and Engine
