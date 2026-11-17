@@ -107,7 +107,8 @@ test('a viewer sees its scope and what is upstream of it, and changes nothing', 
   const a = t.store.createTag({ name: 'School A', color: '#60a5fa' });
   const b = t.store.createTag({ name: 'School B', color: '#e879f9' });
   const core = t.store.createTag({ name: 'Core', color: '#facc15' });
-  const wan = mon(t.store, 'WAN', [], [core]);
+  const isp = t.store.createTag({ name: 'ISP', color: '#4ade80' });
+  const wan = mon(t.store, 'WAN', [], [core, isp]);
   const router = mon(t.store, 'Router', [wan], [core]);
   const swA = mon(t.store, 'Switch A', [router], [a]);
   const apA = mon(t.store, 'AP A', [swA], [a, core]);
@@ -124,9 +125,10 @@ test('a viewer sees its scope and what is upstream of it, and changes nothing', 
   assert.deepEqual(names, ['AP A', 'Router', 'Switch A', 'WAN']);
   const byName = new Map(s.monitors.map((m) => [m.name, m]));
   assert.deepEqual(byName.get('Router').children, [swA]); // not Switch B
-  // tags: only the ones its monitors carry (Core is on AP A, so it counts)
-  assert.deepEqual(s.tags.map((x) => x.name).sort(), ['Core', 'School A']);
-  assert.deepEqual(byName.get('WAN').tags, [core]);
+  // tags: every one its monitors carry, upstream ones included (Core is
+  // also on AP A, ISP only on the WAN), but not School B, which none does
+  assert.deepEqual(s.tags.map((x) => x.name).sort(), ['Core', 'ISP', 'School A']);
+  assert.deepEqual(byName.get('WAN').tags, [core, isp]);
   assert.deepEqual(byName.get('Switch A').tags, [a]);
 
   // reads of what it can see work; anything else is not found

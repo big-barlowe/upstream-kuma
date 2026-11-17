@@ -159,7 +159,7 @@ export async function renderUsers(box, { state }) {
         input('email', 'Email', { type: 'email', autocomplete: 'off' }, sso.enabled ? 'Single sign-on finds the account by this address the first time.' : null)),
       h('section', null, h('h3', null, 'Role'), role),
       h('section', null, h('h3', null, 'Sees'), scopeBox,
-        d.role === 'viewer' ? h('p', { class: 'help' }, 'Like the tag filter: the monitors with these tags, and everything upstream of them, so a viewer can tell when the cause is further up. Viewers see only the tags their monitors carry.') : null),
+        d.role === 'viewer' ? h('p', { class: 'help' }, 'Like the tag filter: the monitors with these tags, and everything upstream of them, so a viewer can tell when the cause is further up. Viewers can filter by any tag those monitors carry.') : null),
       h('section', null, h('h3', null, 'Sign-in'),
         h('div', { class: 'field' },
           h('label', { for: 'u-password' }, isNew ? 'Password' : original.password ? 'New password' : 'Password'),

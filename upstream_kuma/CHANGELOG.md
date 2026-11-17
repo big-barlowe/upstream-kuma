@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.20.2
+
+- **Viewers can filter by every tag on the monitors they see.** Tags decide which monitors are in a viewer's scope; those monitors then decide which tags the viewer can filter by. A viewer scoped to Cabin whose monitors are also tagged Virtual can filter by Virtual, and tags on the monitors upstream of them (the WAN's ISP tag, say) now show too. Before, a tag that was only on upstream monitors was hidden.
+
 ## 0.20.1
 
 - **The sign-in page fits a phone's screen** without scrolling or bouncing (it only scrolls if the form can't fit, e.g. with the keyboard up on a small phone).

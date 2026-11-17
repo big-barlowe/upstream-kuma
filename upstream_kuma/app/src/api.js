@@ -498,7 +498,7 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
   route('GET', '/api/tags/:id/icon', ({ params, view }) => {
     const t = tagOr404(params.id);
     const v = view();
-    if (v && !v.iconTags.has(t.id)) throw new HttpError(404, 'Tag not found');
+    if (v && !v.tagIds.has(t.id)) throw new HttpError(404, 'Tag not found');
     const icon = store.getTagIcon(t.id);
     if (!icon) throw new HttpError(404, 'No icon');
     return new RawResponse(icon.mime, icon.data, ICON_HEADERS);

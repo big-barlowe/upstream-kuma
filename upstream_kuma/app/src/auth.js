@@ -86,19 +86,15 @@ export const publicUser = (u) => u && ({
 });
 
 // What a viewer sees: the monitors its scope matches (`match`), those plus
-// everything upstream of them (`visible`), the tags carried by matched
-// monitors (`tagIds`), and the tags on any visible monitor, whose icons it
-// may load (`iconTags`).
+// everything upstream of them (`visible`), and every tag a visible monitor
+// carries (`tagIds`). Tags pick the monitors; the monitors then decide which
+// tags the viewer can filter by (and whose icons it may load), so a Cabin
+// viewer whose monitors are also tagged Virtual can filter by Virtual, and
+// so on for the tags on the monitors upstream of them.
 export function scopeView(user, { monitorIds, parentsOf, tagMap, tags }) {
   const test = scopeTest(user.scope, tags);
   const match = new Set();
-  const tagIds = new Set();
-  for (const id of monitorIds) {
-    const t = tagMap.get(id) ?? [];
-    if (!test(t)) continue;
-    match.add(id);
-    for (const x of t) tagIds.add(x);
-  }
+  for (const id of monitorIds) if (test(tagMap.get(id) ?? [])) match.add(id);
   const visible = new Set(match);
   const queue = [...match];
   while (queue.length) {
@@ -108,9 +104,9 @@ export function scopeView(user, { monitorIds, parentsOf, tagMap, tags }) {
       queue.push(p);
     }
   }
-  const iconTags = new Set();
-  for (const id of visible) for (const x of tagMap.get(id) ?? []) iconTags.add(x);
-  return { match, visible, tagIds, iconTags };
+  const tagIds = new Set();
+  for (const id of visible) for (const x of tagMap.get(id) ?? []) tagIds.add(x);
+  return { match, visible, tagIds };
 }
 
 // Failed sign-ins per client address: after LIMIT in WINDOW, wait.
