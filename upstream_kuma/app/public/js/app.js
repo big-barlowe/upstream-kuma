@@ -213,7 +213,10 @@ function onState() {
   const r = ui.route;
   if (r?.name === 'dashboard') renderDashboard(true);
   if (r?.name === 'monitor') renderDetail(r.id, true);
-  if (r?.name === 'alerts') paintUnresolved?.(state);
+  if (r?.name === 'alerts') {
+    paintUnresolved?.(state);
+    refreshAlerts?.();
+  }
   // opened by a link before the monitors had loaded
   if (r?.name === 'snmp' && !$('#main .snmp-browser') && state.byId.has(r.id)) renderSnmpBrowser($('#main'), state.byId.get(r.id), { pick: r.pick, navigate: go });
 }
@@ -1474,6 +1477,7 @@ async function action(path, done) {
 // ---- alerts log -------------------------------------------------------------
 
 let paintUnresolved = null;
+let refreshAlerts = null;
 
 const ALERT_BADGE = {
   down: ['down', 'Alert'],
@@ -1485,6 +1489,7 @@ const ALERT_BADGE = {
 async function renderAlerts() {
   const list = await api('alerts');
   const openBox = h('div', { class: 'card open-card' });
+  const listBox = h('div', { class: 'stack alerts-list' });
   paintUnresolved = unresolvedTable(openBox);
   fill($('#main'), h('div', { class: 'stack' },
     h('div', { class: 'page-head' }, h('h1', null, 'Unresolved'),
@@ -1492,20 +1497,37 @@ async function renderAlerts() {
     openBox,
     h('div', { class: 'page-head section-head' }, h('h2', null, 'Alerts sent'),
       h('p', { class: 'muted' }, 'One alert per root cause. Everything cut off downstream is listed in the body instead of alerting on its own.')),
-    list.length ? list.map((a) => {
-      const [cls, label] = a.kind === 'problem' ? [`sev-${a.severity}`, SEVERITIES[a.severity]?.label ?? 'Problem'] : ALERT_BADGE[a.kind] ?? ['up', a.kind];
-      // not `problem`: that class is the Problems page's cards
-      return h('article', { class: `card alert ${a.kind === 'problem' ? `alert-problem sev-${a.severity}` : a.kind}` },
-        h('div', { class: 'card-head' },
-          h('h3', null, a.kind === 'problem' ? sevBadge(a.severity) : h('span', { class: `badge ${cls}` }, label), ' ', a.title),
-          h('span', { class: 'muted small nowrap' }, fmtTime(a.time))),
-        h('pre', { class: 'alert-body' }, a.message),
-        h('div', { class: 'delivered' },
-          a.delivered.length
-            ? a.delivered.map((d) => h('span', { class: `chip ${d.ok ? 'ok' : 'fail'}`, title: d.error || 'Delivered' }, d.ok ? '✓ ' : '✗ ', d.name))
-            : h('span', { class: 'muted small' }, 'Not sent: no notification rule matched')));
-    }) : h('div', { class: 'card' }, h('p', { class: 'muted' }, 'No alerts yet. Calm waters.'))));
+    listBox));
+  let shown = '';
+  // again on every change, so new alerts and finished sends show up
+  refreshAlerts = async () => {
+    const fresh = await api('alerts').catch(() => null);
+    if (fresh && listBox.isConnected) paint(fresh);
+  };
+  const paint = (alerts) => {
+    const key = JSON.stringify(alerts);
+    if (key === shown) return;
+    shown = key;
+    fill(listBox, alerts.length ? alerts.map(alertCard) : h('div', { class: 'card' }, h('p', { class: 'muted' }, 'No alerts yet. Calm waters.')));
+  };
+  paint(list);
   paintUnresolved(state);
+}
+
+function alertCard(a) {
+  const [cls, label] = a.kind === 'problem' ? [`sev-${a.severity}`, SEVERITIES[a.severity]?.label ?? 'Problem'] : ALERT_BADGE[a.kind] ?? ['up', a.kind];
+  // not `problem`: that class is the Problems page's cards
+  return h('article', { class: `card alert ${a.kind === 'problem' ? `alert-problem sev-${a.severity}` : a.kind}` },
+    h('div', { class: 'card-head' },
+      h('h3', null, a.kind === 'problem' ? sevBadge(a.severity) : h('span', { class: `badge ${cls}` }, label), ' ', a.title),
+      h('span', { class: 'muted small nowrap' }, fmtTime(a.time))),
+    h('pre', { class: 'alert-body' }, a.message),
+    h('div', { class: 'delivered' },
+      a.delivered.length
+        ? a.delivered.map((d) => (d.pending
+          ? h('span', { class: 'chip sending', title: 'Sending (failed sends are tried again for a few minutes)' }, '… ', d.name)
+          : h('span', { class: `chip ${d.ok ? 'ok' : 'fail'}`, title: d.error || (d.tries > 1 ? `Delivered on try ${d.tries}` : 'Delivered') }, d.ok ? '✓ ' : '✗ ', d.name)))
+        : h('span', { class: 'muted small' }, 'Not sent: no notification rule matched')));
 }
 
 // ---- tags -------------------------------------------------------------------

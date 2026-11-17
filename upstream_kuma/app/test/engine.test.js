@@ -220,6 +220,20 @@ test('a resolved alert goes wherever the down alert went', async () => {
   assert.deepEqual(up.delivered.map((d) => d.id), [phone]);
 });
 
+test('an alert is logged before it is sent, and updated when the send is done', async () => {
+  const t = setup();
+  let finish;
+  t.engine.notify = (channels) => new Promise((resolve) => { finish = () => resolve(channels.map((c) => ({ id: c.id, name: c.name, ok: true, tries: 2 }))); });
+  t.results['Host 2'] = false;
+  await t.engine.start();
+  const v = t.engine.version;
+  assert.deepEqual(t.store.listAlerts(1)[0].delivered, [{ id: 1, name: 'phone', pending: true }]);
+  finish();
+  await t.engine.idle();
+  assert.deepEqual(t.store.listAlerts(1)[0].delivered, [{ id: 1, name: 'phone', ok: true, tries: 2 }]);
+  assert.ok(t.engine.version > v, 'the page hears about it');
+});
+
 test('after a restart, a resolved alert counts from the down alert', async () => {
   const t = setup();
   t.results['Host 2'] = false;

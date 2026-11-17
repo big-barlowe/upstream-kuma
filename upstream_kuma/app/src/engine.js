@@ -696,11 +696,17 @@ export class Engine {
     };
     if (reminder) alert.reminder = true;
     if (problem) alert.problem = { id: problem.id, name: problem.name, severity: problem.severity };
-    const delivered = channels.length ? await this.notify(channels, alert) : [];
-    this.store.logAlert({
-      time, monitorId: m.id, kind, title, message, affected: alert.affected, delivered,
+    // Logged before it's sent (a send may be retried for a few minutes), so
+    // the Alerts page shows it at once and a resolved alert can find it.
+    const alertId = this.store.logAlert({
+      time, monitorId: m.id, kind, title, message, affected: alert.affected,
+      delivered: channels.map((c) => ({ id: c.id, name: c.name, pending: true })),
       problemId: problem?.id ?? null, severity: problem?.severity ?? (kind === 'down' ? 'severe' : null),
     });
+    this.version++;
+    if (!channels.length) return;
+    const delivered = await this.notify(channels, alert);
+    this.store.setAlertDelivered(alertId, delivered);
     this.version++;
   }
 

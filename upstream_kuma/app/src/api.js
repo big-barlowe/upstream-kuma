@@ -585,6 +585,7 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
 
   route('POST', '/api/notifications/test', async ({ body }) => {
     const n = normalizeNotification({ name: 'Test', ...body });
+    // no retries: the form shows what happened straight away
     const [res] = await deliver([{ id: 0, ...n }], {
       kind: 'test',
       title: 'Test: Upstream Kuma is flowing',
@@ -613,7 +614,7 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
         const base = store.getSettings().publicUrl || store.getSetting('oidc')?.publicUrl;
         return base ? `${base.replace(/\/+$/, '')}/#/` : null;
       })(),
-    });
+    }, { retries: [] });
     if (!res.ok) throw new HttpError(502, res.error);
     return { ok: true };
   });
@@ -1166,6 +1167,6 @@ export function redactAlert(a, visible) {
     ...a,
     message: out.join('\n'),
     affected: a.affected.filter((x) => visible.has(x.id)),
-    delivered: a.delivered.map((d) => ({ ok: d.ok, name: d.ok ? 'Sent' : 'Not delivered' })),
+    delivered: a.delivered.map((d) => (d.pending ? { pending: true, name: 'Sending' } : { ok: d.ok, name: d.ok ? 'Sent' : 'Not delivered' })),
   };
 }

@@ -769,9 +769,13 @@ export class Store {
   // ---- alert log ----------------------------------------------------------
 
   logAlert(a) {
-    this.q(
+    return this.q(
       'INSERT INTO alerts (time, monitor_id, kind, title, message, affected, delivered, problem_id, severity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(a.time, a.monitorId, a.kind, a.title, a.message, JSON.stringify(a.affected ?? []), JSON.stringify(a.delivered ?? []), a.problemId ?? null, a.severity ?? null);
+    ).run(a.time, a.monitorId, a.kind, a.title, a.message, JSON.stringify(a.affected ?? []), JSON.stringify(a.delivered ?? []), a.problemId ?? null, a.severity ?? null).lastInsertRowid;
+  }
+
+  setAlertDelivered(id, delivered) {
+    this.q('UPDATE alerts SET delivered = ? WHERE id = ?').run(JSON.stringify(delivered ?? []), id);
   }
 
   listAlerts(limit) {

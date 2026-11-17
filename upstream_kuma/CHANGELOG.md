@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.20.7
+
+- **Failed alerts are tried again.** If a service doesn't answer (the "operation was aborted due to timeout" some resolved alerts hit), can't be reached, or is busy, the alert is sent again after 5 seconds, 30 seconds and 2 minutes. If it refuses the alert (a wrong URL or token), it isn't. Send test still reports at once.
+- **Clearer reasons when a send fails**: "No answer from chat.googleapis.com within 20s (tried 3 times)" or "Couldn't reach chat.googleapis.com: EAI_AGAIN" instead of "The operation was aborted due to timeout" or "fetch failed".
+- **The Alerts page shows alerts as they happen**: a new alert appears with its channels marked as sending (…), then delivered (✓) or failed (✗), without reloading the page.
+
 ## 0.20.6
 
 - **Fixed: resolved alerts could go missing.**

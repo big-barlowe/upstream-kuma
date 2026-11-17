@@ -898,6 +898,7 @@ table.events { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
 .chip .dot { width: 8px; height: 8px; }
 .chip.ok { border-color: rgba(45, 212, 191, 0.5); padding-right: 10px; }
 .chip.fail { border-color: rgba(248, 113, 113, 0.6); color: #fecaca; padding-right: 10px; }
+.chip.sending { border-color: rgba(251, 191, 36, 0.5); color: var(--muted); padding-right: 10px; }
 .chip-x { border: 0; background: rgba(100, 116, 139, 0.25); color: var(--text); width: 20px; height: 20px; border-radius: 50%; cursor: pointer; line-height: 1; font-size: 0.9rem; }
 .chip-x:hover { background: rgba(248, 113, 113, 0.5); }
 

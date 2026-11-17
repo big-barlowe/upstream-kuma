@@ -20,16 +20,39 @@ export function level(a) {
   return 'calm';
 }
 
+const POST_TIMEOUT = 20000;
+
+// An error not worth retrying: the service answered and said no (a 4xx
+// other than 408/429), or the channel is missing a setting.
+const permanent = (message) => Object.assign(new Error(message), { permanent: true });
+
 async function post(url, body, headers = {}) {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...headers },
-    body: typeof body === 'string' ? body : JSON.stringify(body),
-    signal: AbortSignal.timeout(15000),
-  });
+  const host = (() => {
+    try {
+      return new URL(url).host;
+    } catch {
+      throw permanent(`Not a URL: ${url}`);
+    }
+  })();
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: typeof body === 'string' ? body : JSON.stringify(body),
+      signal: AbortSignal.timeout(POST_TIMEOUT),
+    });
+  } catch (err) {
+    // say what went wrong, not "fetch failed" / "The operation was aborted"
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') throw new Error(`No answer from ${host} within ${POST_TIMEOUT / 1000}s`);
+    const cause = err.cause;
+    throw new Error(`Couldn't reach ${host}: ${cause?.code ? `${cause.code}${cause.hostname ? ` (${cause.hostname})` : ''}` : cause?.message || err.message}`);
+  }
+  // always read the answer, so the connection is free for the next alert
+  const text = await res.text().catch(() => '');
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ''}`);
+    const message = `HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ''}`;
+    throw res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429 ? permanent(message) : new Error(message);
   }
 }
 
@@ -175,7 +198,7 @@ function googleChatMessage(a) {
 }
 
 function required(cfg, ...keys) {
-  for (const k of keys) if (!cfg[k]) throw new Error(`Missing "${k}"`);
+  for (const k of keys) if (!cfg[k]) throw permanent(`Missing "${k}"`);
 }
 
 export const providers = {
@@ -187,7 +210,7 @@ export const providers = {
     async send(cfg, a) {
       required(cfg, 'service');
       const [domain, service] = cfg.service.replace(/^\//, '').split('.');
-      if (!domain || !service) throw new Error('Service must look like domain.service');
+      if (!domain || !service) throw permanent('Service must look like domain.service');
       const body = domain === 'persistent_notification'
         ? { title: a.title, message: a.message, notification_id: `upstream_kuma_${a.monitor?.id ?? 'test'}` }
         : { title: a.title, message: a.message };
@@ -347,17 +370,32 @@ export const providers = {
 };
 
 // Sends to every channel; never throws. Returns a delivery report per channel.
-export async function deliver(channels, alert) {
+// A failed send is tried again after these waits (a timeout, a dropped
+// connection, a 5xx or 429), unless the service refused it outright.
+export const RETRY_DELAYS = [5000, 30000, 120000];
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Sends the alert to each channel: [{ id, name, ok, error?, tries }].
+// `retries`: the waits between tries ([] for Send test, which reports at once).
+export async function deliver(channels, alert, { retries = RETRY_DELAYS, sleep = wait } = {}) {
   return Promise.all(channels.map(async (ch) => {
     const provider = providers[ch.type];
-    try {
-      if (!provider) throw new Error(`Unknown notification type "${ch.type}"`);
-      await provider.send(ch.config, alert);
-      log.info(`Sent "${alert.title}" via ${ch.name}`);
-      return { id: ch.id, name: ch.name, ok: true };
-    } catch (err) {
-      log.error(`Notification "${ch.name}" failed:`, err.message);
-      return { id: ch.id, name: ch.name, ok: false, error: err.message };
+    for (let tries = 1; ; tries++) {
+      try {
+        if (!provider) throw permanent(`Unknown notification type "${ch.type}"`);
+        await provider.send(ch.config, alert);
+        log.info(`Sent "${alert.title}" via ${ch.name}${tries > 1 ? ` (try ${tries})` : ''}`);
+        return { id: ch.id, name: ch.name, ok: true, tries };
+      } catch (err) {
+        const again = !err.permanent && tries <= retries.length;
+        if (again) {
+          log.warn(`Notification "${ch.name}" failed (try ${tries}): ${err.message}; trying again in ${retries[tries - 1] / 1000}s`);
+          await sleep(retries[tries - 1]);
+          continue;
+        }
+        log.error(`Notification "${ch.name}" failed:`, err.message);
+        return { id: ch.id, name: ch.name, ok: false, error: tries > 1 ? `${err.message} (tried ${tries} times)` : err.message, tries };
+      }
     }
   }));
 }
