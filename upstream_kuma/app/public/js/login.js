@@ -56,7 +56,114 @@ function passwordForm(quiet = false) {
   });
 }
 
-async function render() {
+// ---- home-screen apps ---------------------------------------------------------
+//
+// Installed, the app can't follow the provider: iOS shows it in a browser view
+// of its own, and the sign-in ends there. So the app opens it in a window and
+// waits, asking the server until that sign-in is handed over (api.js).
+const STANDALONE = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const HANDOFF_KEY = 'upstream-kuma:handoff';
+const saved = () => {
+  try {
+    const x = JSON.parse(sessionStorage.getItem(HANDOFF_KEY));
+    return x && Date.now() - x.at < 10 * 60000 ? x : null;
+  } catch {
+    return null;
+  }
+};
+const forget = () => {
+  try { sessionStorage.removeItem(HANDOFF_KEY); } catch { /* private mode */ }
+};
+
+async function startHandoff(startUrl) {
+  const { id, code } = await call('auth/oidc/handoff', {});
+  try { sessionStorage.setItem(HANDOFF_KEY, JSON.stringify({ id, code, at: Date.now() })); } catch { /* private mode */ }
+  const url = `${startUrl}&handoff=${encodeURIComponent(id)}`;
+  if (!window.open(url, '_blank')) return location.assign(url); // no window: the old way
+  waitForHandoff(code);
+}
+
+let waiting = null;
+function waitForHandoff(code) {
+  clearTimeout(waiting?.timer);
+  const note = h('p', { class: 'muted' }, 'Finish signing in in the window that opened. You’ll come back here once you’re in.');
+  const codeLine = h('p', { class: 'login-handoff-code', hidden: true }, 'If it asks, check it shows ', h('b', null, code), '.');
+  const cancel = h('button', { class: 'btn ghost', type: 'button', onclick: async () => {
+    stop();
+    await call('auth/oidc/handoff/cancel', {}).catch(() => {});
+    render();
+  } }, 'Cancel');
+  fill(box, h('div', { class: 'login-handoff' }, h('h1', null, 'Signing in…'), note, codeLine, cancel));
+  const stop = () => {
+    clearTimeout(waiting?.timer);
+    removeEventListener('focus', ask);
+    document.removeEventListener('visibilitychange', ask);
+    waiting = null;
+    forget();
+  };
+  const ask = async () => {
+    if (!waiting || document.hidden) return;
+    clearTimeout(waiting.timer);
+    try {
+      const r = await call('auth/oidc/handoff/claim', {});
+      if (!waiting) return;
+      if (r.signedIn) {
+        stop();
+        return back();
+      }
+      if (r.expired || r.error) {
+        stop();
+        return render(r.error || 'The sign-in expired. Try again.');
+      }
+      codeLine.hidden = !r.confirming;
+    } catch { /* not answering: try again */ }
+    if (waiting) waiting.timer = setTimeout(ask, 2000);
+  };
+  waiting = { timer: setTimeout(ask, 2000) };
+  addEventListener('focus', ask);
+  document.addEventListener('visibilitychange', ask);
+}
+
+// In the sign-in window: done, close me (or go on into the app here).
+function signedInHere() {
+  const here = h('button', { class: 'linkish small', type: 'button', onclick: back }, 'Open Upstream Kuma here instead');
+  fill(box, h('div', { class: 'login-handoff' }, h('h1', null, 'You’re signed in'), h('p', { class: 'muted' }, 'Close this window to go back to the app.'), here));
+  window.close();
+}
+
+// In a sign-in window that doesn't share the app's cookies.
+async function confirmHandoff() {
+  let info;
+  try {
+    info = await call('auth/oidc/handoff/confirm');
+  } catch (err) {
+    return fill(box, h('div', { class: 'login-handoff' }, errorLine(err.message)));
+  }
+  const answer = async (cancel) => {
+    try {
+      await call('auth/oidc/handoff/confirm', { cancel });
+    } catch (err) {
+      return fill(box, h('div', { class: 'login-handoff' }, errorLine(err.message)));
+    }
+    fill(box, h('div', { class: 'login-handoff' },
+      h('h1', null, cancel ? 'Cancelled' : 'Done'),
+      h('p', { class: 'muted' }, cancel ? 'Nobody was signed in. You can close this window.' : 'Close this window to go back to the app.')));
+    window.close();
+  };
+  fill(box, h('div', { class: 'login-handoff' },
+    h('h1', null, 'Finish signing in to the app?'),
+    h('p', null, `You signed in as ${info.name}. The Upstream Kuma app should be showing the code `, h('b', { class: 'login-handoff-num' }, info.code), '.'),
+    h('p', { class: 'muted small' }, 'Only continue if you started this sign-in from the app yourself, just now. If you didn’t, someone may be trying to sign in as you: cancel.'),
+    h('div', { class: 'login-handoff-actions' },
+      h('button', { class: 'btn primary', type: 'button', onclick: () => answer(false) }, 'Continue'),
+      h('button', { class: 'btn ghost', type: 'button', onclick: () => answer(true) }, 'Cancel'))));
+}
+
+async function render(error = params.get('error')) {
+  if (params.get('handoff') === 'confirm') return confirmHandoff();
+  if (params.has('signed-in')) return STANDALONE ? back() : signedInHere();
+  const resume = STANDALONE && saved();
+  if (resume && !waiting) return waitForHandoff(resume.code);
   let status;
   try {
     status = await call('auth/status');
@@ -64,7 +171,7 @@ async function render() {
     return fill(box, errorLine(`Upstream Kuma isn't answering: ${err.message}`));
   }
   if (status.signedIn) return back();
-  const problem = params.get('error') ? errorLine(params.get('error')) : null;
+  const problem = error ? errorLine(error) : null;
 
   if (status.setup) {
     return fill(box, form({
@@ -85,8 +192,12 @@ async function render() {
     }));
   }
 
+  const startUrl = `api/auth/oidc/start?next=${encodeURIComponent(location.hash)}`;
   const sso = status.sso
-    ? h('a', { class: 'btn primary login-sso', href: `api/auth/oidc/start?next=${encodeURIComponent(location.hash)}` }, `Sign in with ${status.sso.label}`)
+    ? h('a', { class: 'btn primary login-sso', href: startUrl, onclick: STANDALONE ? (e) => {
+      e.preventDefault();
+      startHandoff(startUrl).catch((err) => render(err.message));
+    } : null }, `Sign in with ${status.sso.label}`)
     : null;
   const pw = h('div', { class: 'login-password' });
   if (status.password) fill(pw, sso ? h('div', { class: 'login-or' }, h('span', null, 'or')) : null, passwordForm(Boolean(sso)));

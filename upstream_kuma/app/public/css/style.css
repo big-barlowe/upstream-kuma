@@ -1448,6 +1448,12 @@ html.login-html { height: 100%; overflow: hidden; background: var(--bg); }
 .login-error { color: #fecaca; background: rgba(248, 113, 113, 0.1); border: 1px solid rgba(248, 113, 113, 0.45); border-radius: 10px; padding: 8px 12px; margin: 0; }
 .login-admin { align-self: center; font-size: 0.82rem; }
 .login-note { margin: 0; }
+.login-handoff { display: flex; flex-direction: column; gap: 12px; }
+.login-handoff p { margin: 0; }
+.login-handoff .btn { justify-content: center; }
+.login-handoff b { color: var(--foam); font-variant-numeric: tabular-nums; letter-spacing: 0.08em; }
+.login-handoff-actions { display: flex; gap: 10px; }
+.login-handoff-actions .btn { flex: 1; padding-block: 10px; }
 @media (max-width: 700px) { .login-page input { font-size: 16px; } }
 
 .badge.role-admin { color: var(--foam); border-color: rgba(56, 189, 248, 0.5); background: rgba(56, 189, 248, 0.12); }

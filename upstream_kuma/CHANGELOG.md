@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.20.10
+
+- **Fixed: single sign-on from the home-screen app ended up in the wrong place.** On an iPhone, the provider's page opened in a separate browser view, and after signing in Upstream Kuma loaded inside that view instead of the app, which stayed signed out. Now the app opens the sign-in in a window of its own and waits, and signs in once you're through. That view on an iPhone has its own cookies, so it asks you to confirm first, showing a 4-digit code the app shows too: a link someone sent you can't sign their app in as you. In a normal browser nothing changes.
+
 ## 0.20.9
 
 - **Fixed: opening a monitor's page froze the whole add-on for seconds.** The page's uptime figures (24 hours, 7 and 30 days) added up the history of every monitor, not just that one, and the page asked again every 15 seconds. Saving an edit opens that page, so saves looked like they took 10 seconds or more, and meanwhile nothing else ran: other pages, checks (whose timeouts ran out, so healthy monitors could look down) and alerts. With 407 monitors and two weeks of history at one CPU core, the page's request went from 13 seconds (with every other request waiting) to under 0.1 second.

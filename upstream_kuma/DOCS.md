@@ -228,6 +228,8 @@ The sign-in page then has a **Sign in with …** button. Someone signing in that
 
 Once an identity is linked to an account, the link wins over the email address. Under **Signs in with**, the Users page shows the identity each account is linked to (its email address, or its username, as the provider gave it at the last sign-in); if one is linked to the wrong account, **Unlink** it in that account's editor and the next sign-in matches by email again. The add-on's log has a line for every SSO sign-in: who the provider said it was, which account that became, and whether by an existing link, by email, or as a new account.
 
+**From a home-screen app**, the sign-in opens in a window of its own (on an iPhone, the browser view iOS shows for other sites) while the app waits; once you're in, the app signs you in and that window can be closed. On an iPhone that window keeps its own cookies, so it first asks you to confirm, showing a 4-digit code the app shows too: only continue if you started the sign-in from the app yourself. A link from someone else that opens this page would otherwise sign *their* app in as you.
+
 The provider may sign in whoever is already signed in there without asking, which makes switching between two accounts awkward. **Ask which account every time** makes it show its account picker instead (`prompt=select_account`, which Microsoft Entra and Google support).
 
 ## Import and export (CSV)

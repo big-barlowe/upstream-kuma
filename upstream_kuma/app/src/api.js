@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { Graph } from './graph.js';
 import { deliver, providerCatalog, providers } from './notifier.js';
 import { config, isAddon, log } from './config.js';
@@ -9,7 +10,7 @@ import { isOid } from './snmp.js';
 import { buildLibrary, mibLibrary, parseMib, setMibLibrary, splitModules } from './mib.js';
 import { parseTagExpr, renameInExpr } from '../public/js/filter.js';
 import { normalizeValueProblem, inScope, SEVERITIES } from './problems.js';
-import { PASSWORD_MIN, SESSION_COOKIE, clearCookie, cookie, hashPassword, parseCookies, publicUser, scopeView, sha256, verifyPassword } from './auth.js';
+import { PASSWORD_MIN, SESSION_COOKIE, clearCookie, cookie, hashPassword, parseCookies, publicUser, randomToken, scopeView, sha256, verifyPassword } from './auth.js';
 import { CALLBACK_PATH, OIDC_DEFAULTS, Oidc, STATE_COOKIE, groupsOf } from './oidc.js';
 
 // A monitor's config without the keys that only change how its data is
@@ -968,9 +969,90 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
     return json({ ok: true }, { 'Set-Cookie': clearCookie(SESSION_COOKIE, req) });
   }, 'public');
 
+  // ---- signing in a home-screen app ------------------------------------------
+  //
+  // An installed web app (iOS especially) shows the provider in a separate
+  // browser view, and the sign-in finishes there rather than in the app,
+  // possibly with cookies of its own. So the app asks for a handoff, opens
+  // the sign-in with its id and waits; the callback marks it signed in, and
+  // the app's next claim (with the cookie only it holds) gets the session.
+  // When the callback runs without that cookie (another cookie jar), the
+  // person confirms in that window first, comparing a code with the app's:
+  // otherwise a link to someone else's handoff would sign *them* in as you.
+  const handoffs = new Map(); // id -> { secret, code, at, userId, confirm, ready, error }
+  const HANDOFF_TTL = 10 * 60000;
+  const HANDOFF_COOKIE = 'uk_handoff';
+  const CONFIRM_COOKIE = 'uk_handoff_ok';
+  const liveHandoff = (id) => {
+    const now = Date.now();
+    for (const [k, x] of handoffs) if (now - x.at > HANDOFF_TTL) handoffs.delete(k);
+    return typeof id === 'string' ? handoffs.get(id) ?? null : null;
+  };
+  // `<id>.<secret>` from a cookie, if it belongs to a live handoff
+  const handoffFrom = (req, name, key) => {
+    const [id, secret] = String(parseCookies(req.headers?.cookie)[name] ?? '').split('.');
+    const x = liveHandoff(id);
+    return x && secret && x[key] && x[key] === sha256(secret) ? { id, x } : null;
+  };
+
+  route('POST', '/api/auth/oidc/handoff', ({ req }) => {
+    if (!oidc.enabled()) throw new HttpError(400, 'Single sign-on is not set up');
+    liveHandoff(null);
+    if (handoffs.size > 500) handoffs.delete(handoffs.keys().next().value);
+    const id = randomToken(16);
+    const secret = randomToken(32);
+    const code = String(1000 + crypto.randomInt(9000));
+    handoffs.set(id, { secret: sha256(secret), code, at: Date.now(), userId: null, confirm: null, ready: false, error: null });
+    return json({ id, code }, { 'Set-Cookie': cookie(HANDOFF_COOKIE, `${id}.${secret}`, { req, maxAge: HANDOFF_TTL }) });
+  }, 'public');
+
+  // The app asking whether it's signed in yet.
+  route('POST', '/api/auth/oidc/handoff/claim', ({ req, who }) => {
+    const mine = handoffFrom(req, HANDOFF_COOKIE, 'secret');
+    if (who) {
+      if (mine) handoffs.delete(mine.id);
+      return json({ signedIn: true }, { 'Set-Cookie': clearCookie(HANDOFF_COOKIE, req) });
+    }
+    if (!mine) return { expired: true };
+    const { id, x } = mine;
+    if (x.error) {
+      handoffs.delete(id);
+      return { error: x.error };
+    }
+    if (!x.ready) return { waiting: true, confirming: Boolean(x.confirm) };
+    handoffs.delete(id);
+    const user = store.getUser(x.userId);
+    if (!user?.active) return { error: 'This account is turned off' };
+    return json({ signedIn: true }, { 'Set-Cookie': [auth.startSession(user, req), clearCookie(HANDOFF_COOKIE, req)] });
+  }, 'public');
+
+  route('POST', '/api/auth/oidc/handoff/cancel', ({ req }) => {
+    const mine = handoffFrom(req, HANDOFF_COOKIE, 'secret');
+    if (mine) handoffs.delete(mine.id);
+    return json({ ok: true }, { 'Set-Cookie': clearCookie(HANDOFF_COOKIE, req) });
+  }, 'public');
+
+  // The sign-in window, when it doesn't share the app's cookies: what to
+  // show, then the person's answer.
+  route('GET', '/api/auth/oidc/handoff/confirm', ({ req }) => {
+    const found = handoffFrom(req, CONFIRM_COOKIE, 'confirm');
+    if (!found) throw new HttpError(404, 'This sign-in has expired. Start it again from the app.');
+    const u = store.getUser(found.x.userId);
+    return { code: found.x.code, name: u?.name || u?.username || '' };
+  }, 'public');
+
+  route('POST', '/api/auth/oidc/handoff/confirm', ({ req, body }) => {
+    const found = handoffFrom(req, CONFIRM_COOKIE, 'confirm');
+    if (!found) throw new HttpError(404, 'This sign-in has expired. Start it again from the app.');
+    if (body.cancel) found.x.error = 'The sign-in was cancelled';
+    else found.x.ready = true;
+    return json({ ok: true }, { 'Set-Cookie': clearCookie(CONFIRM_COOKIE, req) });
+  }, 'public');
+
   route('GET', '/api/auth/oidc/start', async ({ req, query }) => {
     try {
-      const { url, state } = await oidc.start(req, safeNext(query.next));
+      const handoff = liveHandoff(query.handoff) ? query.handoff : null;
+      const { url, state } = await oidc.start(req, safeNext(query.next), handoff);
       return redirect(url, { 'Set-Cookie': cookie(STATE_COOKIE, state, { req, maxAge: 600000 }) });
     } catch (err) {
       return redirect(toLogin(err.message));
@@ -980,7 +1062,7 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
   route('GET', '/api/auth/oidc/callback', async ({ req, query }) => {
     const clear = clearCookie(STATE_COOKIE, req);
     try {
-      const { claims, issuer, next } = await oidc.finish({
+      const { claims, issuer, next, handoff } = await oidc.finish({
         code: query.code,
         state: query.state,
         cookieState: parseCookies(req.headers?.cookie)[STATE_COOKIE],
@@ -988,9 +1070,31 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
         errorDescription: query.error_description,
       }).catch((err) => {
         log.warn(`SSO sign-in failed: ${err.message}`);
+        const x = liveHandoff(err.handoff);
+        if (x) x.error = err.message;
         throw err;
       });
-      const user = ssoUser(claims, issuer); // logs who it was
+      let user;
+      try {
+        user = ssoUser(claims, issuer); // logs who it was
+      } catch (err) {
+        const x = liveHandoff(handoff);
+        if (x) x.error = err.message;
+        throw err;
+      }
+      const x = liveHandoff(handoff);
+      if (x) {
+        x.userId = user.id;
+        const mine = handoffFrom(req, HANDOFF_COOKIE, 'secret');
+        if (mine?.id === handoff) {
+          // the app's own cookies: sign this window in too, the app's claim does the same
+          x.ready = true;
+          return redirect(`../../../login.html?signed-in=1${next}`, { 'Set-Cookie': [auth.startSession(user, req), clear] });
+        }
+        const token = randomToken(32);
+        x.confirm = sha256(token);
+        return redirect('../../../login.html?handoff=confirm', { 'Set-Cookie': [cookie(CONFIRM_COOKIE, `${handoff}.${token}`, { req, maxAge: HANDOFF_TTL }), clear] });
+      }
       return redirect(`../../../${next}`, { 'Set-Cookie': [auth.startSession(user, req), clear] });
     } catch (err) {
       return redirect(toLogin(err.message), { 'Set-Cookie': clear });

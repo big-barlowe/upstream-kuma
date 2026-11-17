@@ -426,3 +426,67 @@ test('JWT checks: HS256 with the client secret, wrong keys', () => {
   assert.throws(() => verifyJwt(`${enc({ alg: 'none' })}.${enc({})}.`, { keys: [] }), /Unsupported/);
   assert.throws(() => verifyJwt(`${enc({ alg: 'RS256', kid: 'zz' })}.${enc({})}.AA`, { keys: [{ kid: 'k1', kty: 'RSA' }] }), /keys matches/);
 });
+
+test('SSO from a home-screen app: the sign-in window hands over, confirming when it has other cookies', async () => {
+  const idp = fakeIdp();
+  const t = setup({ fetch: idp.fetch });
+  const admin = await withAdmin(t);
+  await admin.call('PUT', '/api/sso', { enabled: true, issuer: ISSUER, clientId: 'uk' });
+  await admin.call('POST', '/api/users', { username: 'kim', name: 'Kim', email: 'kim@example.com', role: 'admin' });
+  idp.claims = { sub: 'u-1', email: 'kim@example.com', email_verified: true };
+  const signInWindow = async (win, id, extra = '') => {
+    const start = await win.call('GET', `/api/auth/oidc/start?next=${encodeURIComponent('#/monitor/3')}&handoff=${id}`);
+    const { code, state } = idp.authorize(start.location);
+    return win.call('GET', `/api/auth/oidc/callback?code=${code}&state=${state}${extra}`);
+  };
+
+  // iOS: the window has cookies of its own, so it asks first
+  const app = t.browser();
+  const { id, code } = await app.call('POST', '/api/auth/oidc/handoff', {});
+  assert.match(code, /^\d{4}$/);
+  assert.deepEqual(await app.call('POST', '/api/auth/oidc/handoff/claim', {}), { waiting: true, confirming: false });
+  const win = t.browser();
+  assert.equal((await signInWindow(win, id)).location, '../../../login.html?handoff=confirm');
+  await assert.rejects(win.call('GET', '/api/me'), /401|sign in/i); // nobody signed in there
+  assert.deepEqual(await app.call('POST', '/api/auth/oidc/handoff/claim', {}), { waiting: true, confirming: true });
+  assert.deepEqual(await win.call('GET', '/api/auth/oidc/handoff/confirm'), { code, name: 'Kim' });
+  // only that window can answer, and only the app can claim
+  await assert.rejects(t.browser().call('POST', '/api/auth/oidc/handoff/confirm', {}), /expired/);
+  assert.deepEqual(await t.browser().call('POST', '/api/auth/oidc/handoff/claim', {}), { expired: true });
+  await win.call('POST', '/api/auth/oidc/handoff/confirm', {});
+  assert.deepEqual(await app.call('POST', '/api/auth/oidc/handoff/claim', {}), { signedIn: true });
+  assert.equal((await app.call('GET', '/api/me')).username, 'kim');
+  assert.equal(app.jar.has('uk_handoff'), false);
+  await assert.rejects(win.call('POST', '/api/auth/oidc/handoff/confirm', {}), /expired/); // used up
+
+  // a window sharing the app's cookies (Android, desktop) just signs in
+  const app2 = t.browser();
+  const h2 = await app2.call('POST', '/api/auth/oidc/handoff', {});
+  assert.equal((await signInWindow(app2, h2.id)).location, '../../../login.html?signed-in=1#/monitor/3');
+  assert.deepEqual(await app2.call('POST', '/api/auth/oidc/handoff/claim', {}), { signedIn: true });
+
+  // cancelled in the window, or refused by the provider: the app hears why
+  const app3 = t.browser();
+  const h3 = await app3.call('POST', '/api/auth/oidc/handoff', {});
+  const win3 = t.browser();
+  await signInWindow(win3, h3.id);
+  await win3.call('POST', '/api/auth/oidc/handoff/confirm', { cancel: true });
+  assert.deepEqual(await app3.call('POST', '/api/auth/oidc/handoff/claim', {}), { error: 'The sign-in was cancelled' });
+  assert.deepEqual(await app3.call('POST', '/api/auth/oidc/handoff/claim', {}), { expired: true });
+  await assert.rejects(app3.call('GET', '/api/me'), /401|sign in/i);
+
+  const app4 = t.browser();
+  const h4 = await app4.call('POST', '/api/auth/oidc/handoff', {});
+  const win4 = t.browser();
+  const s4 = await win4.call('GET', `/api/auth/oidc/start?handoff=${h4.id}`);
+  const st = new URL(s4.location).searchParams.get('state');
+  await win4.call('GET', `/api/auth/oidc/callback?state=${st}&error=access_denied&error_description=${encodeURIComponent('User said no')}`);
+  assert.deepEqual(await app4.call('POST', '/api/auth/oidc/handoff/claim', {}), { error: 'User said no' });
+
+  // no account for whoever signed in
+  const app5 = t.browser();
+  const h5 = await app5.call('POST', '/api/auth/oidc/handoff', {});
+  idp.claims = { sub: 'u-5', email: 'nobody@example.com', email_verified: true };
+  await signInWindow(t.browser(), h5.id);
+  assert.match((await app5.call('POST', '/api/auth/oidc/handoff/claim', {})).error, /no Upstream Kuma account/);
+});

@@ -95,7 +95,7 @@ export class Oidc {
     this.store = store;
     this.fetch = fetch;
     this.now = now;
-    this.pending = new Map(); // state -> { nonce, verifier, redirectUri, next, at }
+    this.pending = new Map(); // state -> { nonce, verifier, redirectUri, next, handoff, at }
     this.meta = null; // { issuer, at, doc, jwks }
   }
 
@@ -155,7 +155,7 @@ export class Oidc {
 
   // Begin a sign-in: the URL to send the browser to, and the state that
   // ties the callback to this browser (set as a cookie).
-  async start(req, next) {
+  async start(req, next, handoff = null) {
     const c = this.config();
     if (!this.enabled()) throw new HttpError(400, 'Single sign-on is not set up');
     const { doc } = await this.discover(c.issuer);
@@ -166,7 +166,7 @@ export class Oidc {
     const now = this.now();
     for (const [k, p] of this.pending) if (now - p.at > PENDING_TTL) this.pending.delete(k);
     if (this.pending.size > 1000) this.pending.delete(this.pending.keys().next().value);
-    this.pending.set(state, { nonce, verifier, redirectUri, next, at: now });
+    this.pending.set(state, { nonce, verifier, redirectUri, next, handoff, at: now });
     const url = new URL(doc.authorization_endpoint);
     const scopes = new Set(['openid', ...String(c.scopes || OIDC_DEFAULTS.scopes).split(/\s+/).filter(Boolean)]);
     for (const [k, v] of Object.entries({
@@ -187,8 +187,16 @@ export class Oidc {
 
   // Finish it: trade the code for tokens and return the verified claims
   // (merged with userinfo) and where to go next.
-  async finish({ code, state, cookieState, error, errorDescription }) {
-    const p = state ? this.pending.get(state) : null;
+  // A failure carries `handoff`, so a home-screen app waiting on it can say so.
+  async finish(args) {
+    const p = args.state ? this.pending.get(args.state) : null;
+    return this.#finish(args, p).catch((err) => {
+      err.handoff = p?.handoff ?? null;
+      throw err;
+    });
+  }
+
+  async #finish({ code, state, cookieState, error, errorDescription }, p) {
     if (p) this.pending.delete(state);
     if (error) throw new Error(errorDescription || error);
     if (!p || this.now() - p.at > PENDING_TTL) throw new Error('The sign-in expired or was started elsewhere. Try again.');
@@ -228,6 +236,6 @@ export class Oidc {
         info = {}; // the ID token's claims will do
       }
     }
-    return { claims: { ...info, ...claims, [c.groupsClaim || 'groups']: claims[c.groupsClaim || 'groups'] ?? info[c.groupsClaim || 'groups'] }, issuer: doc.issuer, next: p.next };
+    return { claims: { ...info, ...claims, [c.groupsClaim || 'groups']: claims[c.groupsClaim || 'groups'] ?? info[c.groupsClaim || 'groups'] }, issuer: doc.issuer, next: p.next, handoff: p.handoff };
   }
 }
