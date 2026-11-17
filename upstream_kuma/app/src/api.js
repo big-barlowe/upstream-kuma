@@ -600,8 +600,19 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
         '- Service 2.2',
       ].join('\n'),
       time: Date.now(),
-      monitor: null,
-      affected: [],
+      // an example, for providers that draw the details themselves
+      monitor: { id: 0, name: 'Host 2', type: 'ping', target: '192.0.2.2' },
+      upstream: ['Internet', 'Core switch'],
+      affected: [{ id: 0, name: 'Service 2.1', depth: 1 }, { id: 0, name: 'Microservice 2.1.1', depth: 2 }, { id: 0, name: 'Service 2.2', depth: 1 }],
+      facts: [
+        { key: 'target', label: 'Target', value: '192.0.2.2' },
+        { key: 'reason', label: 'Reason', value: 'No reply (example)' },
+        { key: 'time', label: 'Time', value: new Date().toLocaleString() },
+      ],
+      url: (() => {
+        const base = store.getSettings().publicUrl || store.getSetting('oidc')?.publicUrl;
+        return base ? `${base.replace(/\/+$/, '')}/#/` : null;
+      })(),
     });
     if (!res.ok) throw new HttpError(502, res.error);
     return { ok: true };
@@ -775,7 +786,10 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
 
   route('GET', '/api/settings', () => store.getSettings());
   route('PUT', '/api/settings', ({ body }) => {
-    store.setSettings({ retentionDays: int(body.retentionDays, 90, 1, 3650) });
+    const old = store.getSettings();
+    const publicUrl = String(body.publicUrl ?? old.publicUrl ?? '').trim().replace(/\/+$/, '').slice(0, 500);
+    if (publicUrl && !/^https?:\/\/[^\s/]+/.test(publicUrl)) throw new HttpError(400, 'The address must start with https:// (or http://)');
+    store.setSettings({ retentionDays: int(body.retentionDays ?? old.retentionDays, 90, 1, 3650), publicUrl });
     return store.getSettings();
   });
 

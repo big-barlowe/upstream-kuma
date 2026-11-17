@@ -75,7 +75,7 @@ On a phone (or any window up to 700px wide), the page changes shape so the Falls
 
 ## Settings
 
-The **Settings** page has sections, listed on the left (on a phone, as tabs along the top): **General** (how long to keep heartbeat history, and the version), **Notifications** (rules, channels and problem definitions), **Tags**, **Users** (accounts, what viewers see, and single sign-on), **Import & export** (monitors as a CSV file), **MIB library** and **Account** (your own password, and signing out). Keeping them here, away from the monitor list, means tags and notifications aren't changed by accident.
+The **Settings** page has sections, listed on the left (on a phone, as tabs along the top): **General** (how long to keep heartbeat history, the public address that links in alerts point to, and the version), **Notifications** (rules, channels and problem definitions), **Tags**, **Users** (accounts, what viewers see, and single sign-on), **Import & export** (monitors as a CSV file), **MIB library** and **Account** (your own password, and signing out). Keeping them here, away from the monitor list, means tags and notifications aren't changed by accident.
 
 ## Tags
 
@@ -134,9 +134,9 @@ An alert goes to every channel of every rule that matches it, once per channel. 
 **Channels** are where alerts are delivered:
 
 - **Home Assistant**: any `notify.*` service (e.g. `notify.mobile_app_pixel`), or `persistent_notification.create`. This works with no setup when running as an add-on.
-- **ntfy, Discord, Slack, Google Chat, Telegram, Pushover, Gotify, Webhook, Email (SMTP)**: fill in the fields and use **Send test**. For Google Chat, add a webhook to the space (**Apps & integrations → Webhooks**) and paste its URL. A **Webhook** posts the alert as JSON (`kind`, `title`, `message`, `time`, `monitor`, `problem`, `affected`), except to a Google Chat URL, which only takes Google Chat's own format.
+- **ntfy, Discord, Slack, Google Chat, Telegram, Pushover, Gotify, Webhook, Email (SMTP)**: fill in the fields and use **Send test**. For Google Chat, add a webhook to the space (**Apps & integrations → Webhooks**) and paste its URL. Its alerts are cards: the status, the details (target, reason, time…), and the **flow**: the monitors above the one at fault, it, and the tree of monitors it took down, in the Falls' colours. With a **public address** (Settings → General) they get an **Open in Upstream Kuma** button. A **Webhook** to a Google Chat URL sends the same card.
 
-The webhook channel POSTs JSON: `{ kind, title, message, time, monitor, problem, affected: [{ id, name, depth }] }`. `kind` is `down`, `up`, `problem` (a problem opened) or `resolved` (it cleared); `problem` is its definition, `{ id, name, severity }`, for the last two. The other channels send severe problems as loudly as a monitor going down, and warnings a step below.
+The webhook channel POSTs JSON: `{ kind, title, message, time, monitor, problem, affected: [{ id, name, depth }], upstream, facts: [{ key, label, value }], url }`. `kind` is `down`, `up`, `problem` (a problem opened) or `resolved` (it cleared); `problem` is its definition, `{ id, name, severity }`, for the last two. `upstream` names the monitors above the one at fault (root first, through each one's first parent), `facts` are the message's details one by one, and `url` links to the monitor if a public address is set (else `null`). The other channels send severe problems as loudly as a monitor going down, and warnings a step below.
 
 **Problem definitions** say what counts as a problem. A **problem** is one that is happening: a definition that holds on a monitor right now, until it clears. Each definition has a **severity**, which its problems carry:
 

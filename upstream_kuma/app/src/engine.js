@@ -536,26 +536,33 @@ export class Engine {
       .map(({ id: d, depth }) => ({ id: d, name: this.monitors.get(d).name, depth }));
   }
 
+  // Each compose* gives the alert's title, its plain-text message, and the
+  // same details as `facts` ([{ key, label, value }]) for providers that lay
+  // them out themselves (Google Chat's card).
   composeProblem(m, p, x, opened, openFor = 0, affected = []) {
     const title = opened ? `${SEVERITIES[p.severity].label}: ${m.name} – ${p.name}` : `Resolved: ${m.name} – ${p.name}`;
+    const facts = [{ key: 'value', label: 'Value', value: x.value || 'unknown' }];
+    const target = describeTarget(m);
+    if (target) facts.push({ key: 'target', label: 'Target', value: target });
+    if (!opened) facts.push({ key: 'duration', label: 'Lasted', value: formatDuration(openFor) });
+    facts.push({ key: 'time', label: 'Time', value: this.#formatTime(this.now()) });
     const lines = opened
       ? [`${p.name} on ${m.name}.`, '', `Value: ${x.value || 'unknown'}`]
       : [`${p.name} cleared on ${m.name} after ${formatDuration(openFor)}.`, '', `Value: ${x.value || 'unknown'}`];
-    const target = describeTarget(m);
     if (target) lines.push(`Target: ${target}`);
     lines.push(`Time: ${this.#formatTime(this.now())}`);
     if (affected.length) {
       lines.push('', `${opened ? 'Downstream monitors' : 'Downstream monitors it covered'} (${affected.length}):`);
       for (const a of affected) lines.push(`${'-'.repeat(a.depth)} ${a.name}`);
     }
-    return { title, message: lines.join('\n') };
+    return { title, message: lines.join('\n'), facts };
   }
 
   async #sendProblem(m, p, x, opened, openFor) {
     const affected = p.config.downstream ? this.#downstreamOf(m.id) : [];
-    const { title, message } = this.composeProblem(m, p, x, opened, openFor, affected);
-    (opened && p.severity !== 'info' ? log.warn : log.info)(title);
-    await this.#dispatch(m, opened ? 'problem' : 'resolved', title, message, affected, p);
+    const composed = this.composeProblem(m, p, x, opened, openFor, affected);
+    (opened && p.severity !== 'info' ? log.warn : log.info)(composed.title);
+    await this.#dispatch(m, opened ? 'problem' : 'resolved', composed, affected, p);
   }
 
   // ---- push monitors ------------------------------------------------------
@@ -598,43 +605,68 @@ export class Engine {
     const verb = UNREACHABLE_TYPES.has(m.type) ? 'is unreachable' : 'is down';
     const title = `${reminder ? 'Reminder' : 'Alert'}: ${m.name} ${verb}`;
     const lines = [`${m.name} ${verb}.`, ''];
+    const facts = [];
     const target = describeTarget(m);
-    if (target && target !== 'push') lines.push(`Target: ${target}`);
-    lines.push(`Reason: ${result.msg || 'unknown'}`);
-    lines.push(`Time: ${this.#formatTime(this.now())}`);
+    if (target && target !== 'push') facts.push({ key: 'target', label: 'Target', value: target });
+    facts.push({ key: 'reason', label: 'Reason', value: result.msg || 'unknown' });
+    facts.push({ key: 'time', label: 'Time', value: this.#formatTime(this.now()) });
+    for (const f of facts) lines.push(`${f.label}: ${f.value}`);
     if (affected.length) {
       lines.push('', `Other affected monitors (${affected.length}):`);
       for (const a of affected) lines.push(`${'-'.repeat(a.depth)} ${a.name}`);
     }
-    return { title, message: lines.join('\n') };
+    return { title, message: lines.join('\n'), facts };
   }
 
   composeUp(m, downFor, resuming) {
     const title = `Resolved: ${m.name} is back up`;
+    const facts = [
+      { key: 'duration', label: 'Down for', value: formatDuration(downFor) },
+      { key: 'time', label: 'Time', value: this.#formatTime(this.now()) },
+    ];
     const lines = [`${m.name} is up again after ${formatDuration(downFor)} down.`, `Time: ${this.#formatTime(this.now())}`];
     if (resuming.length) {
       lines.push('', `Re-checking downstream monitors (${resuming.length}):`);
       for (const a of resuming) lines.push(`${'-'.repeat(a.depth)} ${a.name}`);
     }
-    return { title, message: lines.join('\n') };
+    return { title, message: lines.join('\n'), facts };
   }
 
   async #sendDown(m, result, affected, reminder) {
-    const { title, message } = this.composeDown(m, result, affected, reminder);
-    log.warn(title, affected.length ? `(+${affected.length} downstream)` : '');
-    await this.#dispatch(m, 'down', title, message, affected);
+    const composed = this.composeDown(m, result, affected, reminder);
+    log.warn(composed.title, affected.length ? `(+${affected.length} downstream)` : '');
+    await this.#dispatch(m, 'down', { ...composed, reminder }, affected);
   }
 
   async #sendRecovery(m, downFor) {
     const resuming = this.graph
       .subtree(m.id, (d) => this.runtime.get(d)?.status === BLOCKED, (d) => this.monitors.get(d)?.name ?? '')
       .map(({ id, depth }) => ({ id, name: this.monitors.get(id).name, depth }));
-    const { title, message } = this.composeUp(m, downFor, resuming);
-    log.info(title);
-    await this.#dispatch(m, 'up', title, message, resuming);
+    const composed = this.composeUp(m, downFor, resuming);
+    log.info(composed.title);
+    await this.#dispatch(m, 'up', composed, resuming);
   }
 
-  async #dispatch(m, kind, title, message, affected, problem = null) {
+  // The chain above a monitor, root first, through each one's first parent:
+  // where it sits in the falls.
+  #upstreamPath(id) {
+    const path = [];
+    const seen = new Set([id]);
+    for (let p = this.graph.parentsOf(id)[0]; p != null && !seen.has(p) && path.length < 12; p = this.graph.parentsOf(p)[0]) {
+      seen.add(p);
+      path.unshift(this.monitors.get(p)?.name ?? '?');
+    }
+    return path;
+  }
+
+  // A link to the monitor, when Upstream Kuma knows the address people open
+  // it at (Settings → General, else the single sign-on public URL).
+  #monitorUrl(id) {
+    const base = this.store.getSettings().publicUrl || this.store.getSetting('oidc')?.publicUrl || '';
+    return base ? `${base.replace(/\/+$/, '')}/#/?focus=${id}&info=${id}` : null;
+  }
+
+  async #dispatch(m, kind, { title, message, facts = [], reminder = false }, affected, problem = null) {
     const time = this.now();
     const channels = this.#channelsFor(m, kind, affected, problem);
     const alert = {
@@ -644,7 +676,11 @@ export class Engine {
       time,
       monitor: { id: m.id, name: m.name, type: m.type, target: describeTarget(m) },
       affected: affected.map(({ id, name, depth }) => ({ id, name, depth })),
+      facts,
+      upstream: this.#upstreamPath(m.id),
+      url: this.#monitorUrl(m.id),
     };
+    if (reminder) alert.reminder = true;
     if (problem) alert.problem = { id: problem.id, name: problem.name, severity: problem.severity };
     const delivered = channels.length ? await this.notify(channels, alert) : [];
     this.store.logAlert({

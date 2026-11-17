@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.20.5
+
+- **Google Chat alerts are cards.** The status as a coloured line, the details (target, reason, time, value) each with an icon, and the **flow**: the monitors above the one at fault, it, and the tree of everything it took down, in the Falls' colours (a long tree folds). If Chat ever refuses the card, the alert is sent as text instead, so it still arrives. **Send test** shows an example card.
+- **A public address** (Settings → General): where people open Upstream Kuma. Google Chat alerts then get an **Open in Upstream Kuma** button that opens the monitor, and the webhook's JSON a `url`. If single sign-on has a public URL, that is used until you set one.
+- The webhook's JSON also carries `upstream` (the monitors above) and `facts` (the details one by one).
+
 ## 0.20.4
 
 - **New notification channel: Google Chat.** Add a webhook to the space (Apps & integrations → Webhooks) and paste its URL. Alerts arrive as a bold title with the details below.

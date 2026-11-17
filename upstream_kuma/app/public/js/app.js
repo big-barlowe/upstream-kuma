@@ -1699,7 +1699,7 @@ function tagIconDialog(t, onSaved) {
 
 // `admin`: only admins see the section (viewers have just Account).
 const SETTINGS = [
-  { id: 'general', admin: true, label: 'General', note: 'History, version', icon: 'M4 7h9M17 7h3M4 17h3M11 17h9M15 5v4M9 15v4', render: (box) => renderGeneral(box) },
+  { id: 'general', admin: true, label: 'General', note: 'History, address, version', icon: 'M4 7h9M17 7h3M4 17h3M11 17h9M15 5v4M9 15v4', render: (box) => renderGeneral(box) },
   { id: 'notifications', admin: true, label: 'Notifications', note: 'Rules, channels, problem definitions', icon: 'M21 3 3 10.5l7 3 3 7.5zM10 13.5 21 3', render: (box) => renderNotifications(box, { state }) },
   { id: 'tags', admin: true, label: 'Tags', note: 'Names, colours, icons', icon: 'M3.5 12.5V4h8.5l8.5 8.5-8 8zM8 7v3M6.5 8.5h3', render: (box) => renderTags(box) },
   { id: 'users', admin: true, label: 'Users', note: 'Accounts, what they see, SSO', icon: 'M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20c.5-3.5 3-5.5 6.5-5.5s6 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 6.5M18 14.8c2 .7 3.2 2.5 3.5 5.2', render: (box) => renderUsers(box, { state }) },
@@ -1729,6 +1729,7 @@ async function renderSettings(section) {
 async function renderGeneral(box) {
   const [settings, info] = await Promise.all([api('settings'), api('info')]);
   const retention = h('input', { id: 's-ret', type: 'number', min: 1, value: settings.retentionDays });
+  const publicUrl = h('input', { id: 's-url', type: 'url', value: settings.publicUrl ?? '', placeholder: 'https://uk.example.com', autocomplete: 'off', spellcheck: false });
   fill(box, h('div', { class: 'stack' },
     h('div', { class: 'page-head' }, h('h1', null, 'General')),
     h('form', {
@@ -1736,7 +1737,7 @@ async function renderGeneral(box) {
       onsubmit: async (e) => {
         e.preventDefault();
         try {
-          await api('settings', { method: 'PUT', body: { retentionDays: Number(retention.value) } });
+          await api('settings', { method: 'PUT', body: { retentionDays: Number(retention.value), publicUrl: publicUrl.value } });
           toast('Saved', 'success');
         } catch (err) {
           toast(err.message, 'error');
@@ -1745,6 +1746,9 @@ async function renderGeneral(box) {
     },
     h('h3', null, 'Data'),
     h('div', { class: 'field' }, h('label', { for: 's-ret' }, 'Keep heartbeat history for (days)'), retention),
+    h('h3', null, 'Address'),
+    h('div', { class: 'field' }, h('label', { for: 's-url' }, 'Public address (optional)'), publicUrl,
+      h('small', null, `Where people open Upstream Kuma${info.addon ? ' directly (the add-on\'s port or your proxy), since the sidebar is Home Assistant\'s' : ''}. Alerts that can carry a link (Google Chat, the webhook) link to the monitor there.`)),
     h('div', { class: 'form-actions' }, h('button', { class: 'btn primary', type: 'submit' }, 'Save'))),
     h('div', { class: 'card' },
       h('h3', null, 'About'),

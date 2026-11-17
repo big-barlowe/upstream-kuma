@@ -3,9 +3,14 @@ import { log } from './config.js';
 
 // An alert passed to every provider:
 //   { kind: 'down' | 'up' | 'problem' | 'resolved' | 'test', title, message,
-//     monitor, affected, time, problem?: { id, name, severity } }
+//     monitor, affected, time, problem?: { id, name, severity },
+//     facts, upstream, url, reminder? }
 // `title` is the one-line subject ("Alert: Host 2 is unreachable"); `message`
 // is the plain-text body including the tree of affected downstream monitors.
+// For providers that lay an alert out themselves: `facts` are its details
+// ([{ key, label, value }]: target, reason, value, duration, time),
+// `affected` the downstream tree ({ id, name, depth }, in order), `upstream`
+// the names above the monitor (root first), `url` a link to it or null.
 
 // How loud an alert should be: 'urgent' (a monitor down, a severe problem),
 // 'warning', or 'calm' (resolved, info, test).
@@ -28,9 +33,12 @@ async function post(url, body, headers = {}) {
   }
 }
 
-// Google Chat takes only its own message format ({ text }, with *bold* and
-// ``` blocks; at most 4,096 characters), so a generic webhook pointed at it
-// sends that too.
+// ---- Google Chat ---------------------------------------------------------------
+// Google Chat takes only its own message format, so a generic webhook pointed
+// at it sends that too. An alert is a card: the status, its details, and the
+// flow it sits in (the monitors above it, it, and what it cut off, drawn as an
+// indented tree in the Falls' colours), with a link to the monitor when
+// Upstream Kuma knows its address.
 const isGoogleChat = (url) => {
   try {
     return new URL(url).hostname === 'chat.googleapis.com';
@@ -39,12 +47,131 @@ const isGoogleChat = (url) => {
   }
 };
 
-function googleChatMessage(a) {
+// Read on Chat's light and dark themes alike.
+const CHAT = { down: '#ef4444', up: '#14b8a6', pending: '#f59e0b', blocked: '#64748b', info: '#0ea5e9', line: '#94a3b8' };
+const CHAT_LOGO = 'https://raw.githubusercontent.com/big-barlowe/upstream-kuma/main/upstream_kuma/icon.png';
+const FACT_ICON = { target: 'dns', reason: 'info', value: 'monitoring', duration: 'timer', time: 'schedule' };
+const CHAT_ROWS = 40; // downstream rows shown before "and N more"
+const INDENT = '\u2003\u2002'; // em + en space: not collapsed like ordinary spaces
+
+const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const font = (color, s) => `<font color="${color}">${s}</font>`;
+
+// What the card says about the monitor: status word, its colour, an icon,
+// the colour of the downstream monitors listed, and what that list is.
+function chatLook(a) {
+  const n = a.affected?.length ?? 0;
+  switch (a.kind) {
+    case 'down': return { word: a.reminder ? 'STILL DOWN' : 'DOWN', color: CHAT.down, icon: 'error', below: CHAT.blocked, list: `${n} downstream cut off` };
+    case 'up': return { word: 'UP', color: CHAT.up, icon: 'check_circle', below: CHAT.pending, list: `${n} downstream re-checking` };
+    case 'problem': {
+      const sev = a.problem?.severity;
+      const color = sev === 'severe' ? CHAT.down : sev === 'warning' ? CHAT.pending : CHAT.info;
+      return { word: (a.problem?.name ?? 'Problem').toUpperCase(), color, icon: 'warning', below: CHAT.line, list: `${n} downstream` };
+    }
+    case 'resolved': return { word: 'RESOLVED', color: CHAT.up, icon: 'check_circle', below: CHAT.line, list: `${n} downstream` };
+    default: return { word: 'TEST', color: CHAT.info, icon: 'notifications', below: CHAT.blocked, list: `${n} downstream (example)` };
+  }
+}
+
+// The flow as lines of text: up to three monitors above (root side first),
+// the monitor, then its downstream tree.
+function chatFlow(a, look) {
+  const up = a.upstream ?? [];
+  const shown = up.slice(-3);
+  const rows = [];
+  if (up.length > shown.length) rows.push({ level: 0, text: font(CHAT.line, `… ${up.length - shown.length} more above`) });
+  const first = rows.length;
+  shown.forEach((name, i) => rows.push({ level: first + i, text: `${font(CHAT.up, '●')} ${font(CHAT.line, esc(name))}` }));
+  const at = rows.length;
+  const name = a.monitor?.name ?? 'Monitor';
+  rows.push({ level: at, text: `${font(look.color, '●')} <b>${esc(name)}</b> ${font(look.color, `<b>${esc(look.word)}</b>`)}` });
+  const affected = a.affected ?? [];
+  for (const x of affected.slice(0, CHAT_ROWS)) rows.push({ level: at + x.depth, text: `${font(look.below, '●')} ${esc(x.name)}` });
+  if (affected.length > CHAT_ROWS) rows.push({ level: at + 1, text: font(CHAT.line, `… and ${affected.length - CHAT_ROWS} more`) });
+  return rows.map(({ level, text }) => (level ? `${INDENT.repeat(level - 1)}${font(CHAT.line, '└')} ` : '') + text);
+}
+
+// The plain version: a bold title over the message in a code block (at most
+// 4,096 characters).
+function googleChatText(a) {
   const head = `*${a.title}*\n`;
   let body = a.message;
   const room = 4096 - head.length - 8;
   if (body.length > room) body = `${body.slice(0, room - 2)}\n…`;
   return { text: `${head}\`\`\`${body}\`\`\`` };
+}
+
+// A card, or if Chat refuses it, the plain version, so an alert still gets
+// there (a test shows the refusal instead).
+async function sendGoogleChat(url, a) {
+  try {
+    await post(url, googleChatMessage(a));
+  } catch (err) {
+    if (a.kind === 'test' || !/^HTTP 400/.test(err.message)) throw err;
+    log.warn(`Google Chat refused the alert card (${err.message}); sent it as text`);
+    await post(url, googleChatText(a));
+  }
+}
+
+function googleChatMessage(a) {
+  const look = chatLook(a);
+  const n = a.affected?.length ?? 0;
+  const prefix = /^([^:]{1,20}):\s*/.exec(a.title);
+  const headline = prefix ? a.title.slice(prefix[0].length) : a.title;
+  const facts = (a.facts ?? []).map((f) => ({
+    decoratedText: {
+      topLabel: f.label,
+      text: esc(f.value),
+      wrapText: true,
+      startIcon: { materialIcon: { name: FACT_ICON[f.key] ?? 'info' } },
+    },
+  }));
+  const status = {
+    decoratedText: {
+      topLabel: 'Status',
+      text: `${font(look.color, `<b>● ${esc(look.word)}</b>`)}${n ? font(CHAT.line, ` · ${look.list}`) : ''}`,
+      wrapText: true,
+      startIcon: { materialIcon: { name: look.icon } },
+    },
+  };
+  const lines = chatFlow(a, look);
+  // a long tree folds: the first lines stay, the rest open on a click
+  const KEEP = 14;
+  const flow = lines.length > KEEP + 4
+    ? { header: 'Flow', collapsible: true, uncollapsibleWidgetsCount: 1, widgets: [{ textParagraph: { text: lines.slice(0, KEEP).join('<br>') } }, { textParagraph: { text: lines.slice(KEEP).join('<br>') } }] }
+    : { header: 'Flow', widgets: [{ textParagraph: { text: lines.join('<br>') } }] };
+  const sections = [{ widgets: [status, ...facts] }, flow];
+  if (a.url) {
+    sections.push({
+      widgets: [{
+        buttonList: {
+          buttons: [{
+            text: 'Open in Upstream Kuma',
+            icon: { materialIcon: { name: 'open_in_new' } },
+            color: { red: 0.05, green: 0.55, blue: 0.75, alpha: 1 },
+            onClick: { openLink: { url: a.url } },
+          }],
+        },
+      }],
+    });
+  }
+  return {
+    fallbackText: `${a.title}${n ? ` (${look.list})` : ''}`,
+    cardsV2: [{
+      cardId: `uk-${a.kind}`,
+      card: {
+        header: {
+          title: headline,
+          subtitle: `Upstream Kuma · ${prefix ? prefix[1] : 'Alert'}`,
+          imageUrl: CHAT_LOGO,
+          imageType: 'CIRCLE',
+          imageAltText: 'Upstream Kuma',
+        },
+        sections,
+      },
+    }],
+  };
 }
 
 function required(cfg, ...keys) {
@@ -120,7 +247,7 @@ export const providers = {
     fields: [{ key: 'webhookUrl', label: 'Webhook URL', secret: true, help: 'In the space: Apps & integrations → Webhooks → Add webhook, then copy its URL' }],
     async send(cfg, a) {
       required(cfg, 'webhookUrl');
-      await post(cfg.webhookUrl, googleChatMessage(a));
+      await sendGoogleChat(cfg.webhookUrl, a);
     },
   },
 
@@ -178,7 +305,7 @@ export const providers = {
     fields: [{ key: 'url', label: 'URL' }],
     async send(cfg, a) {
       required(cfg, 'url');
-      if (isGoogleChat(cfg.url)) return post(cfg.url, googleChatMessage(a));
+      if (isGoogleChat(cfg.url)) return sendGoogleChat(cfg.url, a);
       await post(cfg.url, {
         kind: a.kind,
         title: a.title,
@@ -187,6 +314,9 @@ export const providers = {
         monitor: a.monitor,
         problem: a.problem ?? null,
         affected: a.affected,
+        upstream: a.upstream ?? [],
+        facts: a.facts ?? [],
+        url: a.url ?? null,
       });
     },
   },

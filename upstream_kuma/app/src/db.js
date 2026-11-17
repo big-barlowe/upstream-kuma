@@ -255,6 +255,8 @@ const TAG_COLS = 'id, name, color, icon, icon_updated_at AS iconV';
 
 export const DEFAULT_SETTINGS = {
   retentionDays: 90,
+  // the address people open Upstream Kuma at, for links in alerts
+  publicUrl: '',
 };
 
 const MONITOR_FIELDS = {

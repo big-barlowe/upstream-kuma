@@ -198,7 +198,7 @@ Moving goes through `moveMonitors()` in api.js (`POST api/monitors/move {moves: 
 ## Adding things
 
 - **Monitor type**: add a checker in `src/checkers/`, register it in `checkers/index.js` (`checkers` + `MONITOR_TYPES`), add `describeTarget` in `engine.js`, then add form fields in `public/js/forms.js` (`TYPE_FIELDS`, `TYPE_HELP`) and a label in `util.js` (`TYPE_LABEL`). Add its settings to `CSV_COLUMNS` in `transfer.js` and to `docs/csv.md`.
-- **Notification provider**: add an entry to `providers` in `notifier.js` with `label`, `fields` (rendered automatically by the form) and `send(cfg, alert)`.
+- **Notification provider**: add an entry to `providers` in `notifier.js` with `label`, `fields` (rendered automatically by the form) and `send(cfg, alert)`. Besides `title`/`message`, an alert carries `facts` (`[{key, label, value}]` from the engine's `compose*`), `affected` (the tree, `{id, name, depth}` in order), `upstream` (names above, through first parents) and `url` (from settings `publicUrl`, else the SSO `publicUrl`, else null), for providers that lay it out themselves: Google Chat builds a `cardsV2` card (`googleChatMessage()`), falling back to plain text if Chat refuses it (not for tests).
 
 ## Releasing
 

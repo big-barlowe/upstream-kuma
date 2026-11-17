@@ -81,6 +81,22 @@ test('a down host sends one alert listing everything beneath it, without checkin
   assert.equal(a.title, 'Alert: Host 2 is unreachable');
   assert.match(a.message, /Other affected monitors \(3\):\n- Service 2\.1\n-- Microservice 2\.1\.1\n- Service 2\.2/);
   assert.deepEqual(a.affected.map((x) => x.name), ['Service 2.1', 'Microservice 2.1.1', 'Service 2.2']);
+  // the same details, structured, for providers that lay them out (Google Chat)
+  assert.deepEqual(a.facts.map((f) => f.key), ['reason', 'time']);
+  assert.equal(a.facts[0].value, 'timeout');
+  assert.deepEqual(a.upstream, ['WAN']);
+  assert.equal(a.url, null); // no public address set
+});
+
+test('alerts link to the monitor once the public address is set', async () => {
+  const t = setup();
+  t.store.setSettings({ publicUrl: 'https://uk.example.com' });
+  t.results['Microservice 2.1.1'] = false;
+  await t.engine.start();
+  await t.engine.idle();
+  const [a] = t.alerts;
+  assert.deepEqual(a.upstream, ['WAN', 'Host 2', 'Service 2.1']);
+  assert.equal(a.url, `https://uk.example.com/#/?focus=${t.ids['Microservice 2.1.1']}&info=${t.ids['Microservice 2.1.1']}`);
 });
 
 test('a child failure re-checks its parents first and alerts on the real root cause', async () => {
