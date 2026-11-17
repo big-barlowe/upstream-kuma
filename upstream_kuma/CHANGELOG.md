@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.20.1
+
+- **The sign-in page fits a phone's screen** without scrolling or bouncing (it only scrolls if the form can't fit, e.g. with the keyboard up on a small phone).
+- **Fixed: on a phone, streams on the sign-in page could start away from the node.** Each now starts exactly where the node is drawn.
+
 ## 0.20.0
 
 - **Accounts and sign-in.** Upstream Kuma run on its own now asks you to sign in. The first time you open it after updating, it asks you to create the admin account: do that straight away, since until then whoever opens it can. Under Home Assistant nothing changes in the sidebar: Home Assistant has signed you in, so you're an admin there. The add-on's direct port (`allow_direct_access`) now shows the sign-in page instead of the app.

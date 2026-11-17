@@ -120,16 +120,17 @@ host.append(rim, flowing, over);
 let streamId = 0;
 
 // Where the node's centre is on the page.
-function origin() {
-  const r = node.getBoundingClientRect();
-  return [r.left + r.width / 2, r.top + r.height / 2];
-}
+// Where the node is drawn, and the streams layer's size, in the layer's own
+// units (its pixels). Measured against the layer itself, not the window: on
+// a phone the two differ while the browser's bars come and go. Streams start
+// from the same point the node is drawn at (sizeStreams() sets both).
+const place = { x: 0, y: 0, w: 1, h: 1 };
 
 // A meandering line from (x, y) that leaves the window: it heads off to one
 // side and down, wanders, and bends down as it goes, like falling water.
 function course(x, y) {
-  const w = innerWidth;
-  const hgt = innerHeight;
+  const w = place.w;
+  const hgt = place.h;
   const side = Math.random() < 0.5 ? -1 : 1;
   // out to the side first (clear of the name under the node), then falling
   let a = side > 0 ? -0.05 + Math.random() * 0.4 : Math.PI + 0.05 - Math.random() * 0.4;
@@ -160,13 +161,13 @@ function course(x, y) {
 }
 
 function spawn() {
-  const [x, y] = origin();
-  const d = course(x, y);
+  sizeStreams();
+  const d = course(place.x, place.y);
   const id = `ls-${++streamId}`;
   // the mask's stroke uncovers the stream from the node outward
   const reveal = svg('path', { d, pathLength: 1, class: 'ls-reveal' });
   const g = svg('g', { class: 'ls-stream', mask: `url(#${id})` },
-    svg('mask', { id, maskUnits: 'userSpaceOnUse', x: 0, y: 0, width: innerWidth, height: innerHeight }, reveal),
+    svg('mask', { id, maskUnits: 'userSpaceOnUse', x: 0, y: 0, width: place.w, height: place.h }, reveal),
     svg('path', { d, class: 'ls-bed' }),
     svg('path', { d, class: 'ls-water' }),
     svg('path', { d, class: 'ls-foam' }));
@@ -183,9 +184,14 @@ function loop() {
 }
 
 function sizeStreams() {
-  host.setAttribute('viewBox', `0 0 ${innerWidth} ${innerHeight}`);
-  const [x, y] = origin();
-  const s = node.getBoundingClientRect().width / layers.box;
+  const box = host.getBoundingClientRect();
+  const r = node.getBoundingClientRect();
+  if (!box.width || !r.width) return;
+  const x = r.left + r.width / 2 - box.left;
+  const y = r.top + r.height / 2 - box.top;
+  Object.assign(place, { x, y, w: box.width, h: box.height });
+  host.setAttribute('viewBox', `0 0 ${box.width} ${box.height}`);
+  const s = r.width / layers.box;
   const at = `translate(${x - layers.centre[0] * s} ${y - layers.centre[1] * s}) scale(${s})`;
   rim.setAttribute('transform', at);
   over.setAttribute('transform', at);
@@ -196,6 +202,8 @@ function sizeStreams() {
 // again whenever the card's content (and so where the node sits) changes
 sizeStreams();
 addEventListener('resize', sizeStreams);
+addEventListener('scroll', sizeStreams, { passive: true });
+visualViewport?.addEventListener('resize', sizeStreams);
 new ResizeObserver(sizeStreams).observe(document.querySelector('.login-wrap'));
 if (!STILL) setTimeout(loop, 500);
 
