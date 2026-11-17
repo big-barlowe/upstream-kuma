@@ -420,3 +420,44 @@ test('an edit or Check now while a check is running gets a check of its own', as
   await t.finish('Box');
   assert.deepEqual(t.running, []);
 });
+
+test('the 24h uptime is counted in memory, agrees with the heartbeats and survives a restart', async () => {
+  const t = setup();
+  await t.engine.start();
+  await t.engine.idle();
+  t.results['Service 1'] = false;
+  for (let i = 0; i < 3; i++) {
+    t.advance(20 * 60000);
+    await t.engine.check(t.ids['Service 1']);
+    await t.engine.idle();
+  }
+  const uptimes = (engine) => Object.fromEntries(engine.snapshot().monitors.map((m) => [m.name, [m.uptime24, m.avgPing24]]));
+  const now = uptimes(t.engine);
+  assert.deepEqual(now['Service 1'], [0.25, 5]);
+  assert.deepEqual(now['Microservice 1'], [1, 5]); // blocked beats count neither way
+  for (const [name, id] of Object.entries(t.ids)) {
+    const { day } = t.store.monitorUptime(id, 1_700_000_000_000 + 60 * 60000);
+    assert.deepEqual(now[name], [day.uptime, day.avgPing], name);
+  }
+
+  const restarted = new Engine({ store: t.store, checkers: {}, notify: async () => [], now: () => 1_700_000_000_000 + 60 * 60000, schedule: () => null, cancel: () => {} });
+  restarted.reload();
+  assert.deepEqual(uptimes(restarted), now);
+
+  t.advance(25 * 3600000);
+  assert.deepEqual(uptimes(t.engine)['Service 1'], [null, null]);
+  t.results['Service 1'] = true;
+  await t.engine.check(t.ids['Service 1']);
+  await t.engine.idle();
+  assert.deepEqual(uptimes(t.engine)['Service 1'], [1, 5]);
+});
+
+test('old heartbeats are pruned in batches', async () => {
+  const store = new Store(':memory:');
+  const id = store.createMonitor({ name: 'a', type: 'ping', config: {}, interval: 60, retries: 0, retryInterval: 20, timeout: 5, resendInterval: 0, parentMode: 'all', active: true });
+  for (let i = 0; i < 12; i++) store.addHeartbeat({ monitorId: id, status: 1, time: i, ping: 1 });
+  assert.equal(store.pruneHeartbeats(10, 5), 5);
+  assert.equal(store.pruneHeartbeats(10, 5), 5);
+  assert.equal(store.pruneHeartbeats(10, 5), 0);
+  assert.equal(store.recentHeartbeats(id, 100).length, 2);
+});

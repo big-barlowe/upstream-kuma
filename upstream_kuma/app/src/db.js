@@ -648,24 +648,37 @@ export class Store {
     ).all(limit);
   }
 
-  // Up/down counts per monitor since `since`. Pending and blocked beats are
-  // excluded: blocked means "unknown", so it should not count against uptime.
-  uptimeSince(since) {
-    const rows = this.q(
-      `SELECT monitor_id AS id, SUM(status = 1) AS up, SUM(status = 0) AS down,
-              AVG(CASE WHEN status = 1 THEN ping END) AS avgPing
-       FROM heartbeats WHERE time >= ? GROUP BY monitor_id`
-    ).all(since);
-    const out = new Map();
-    for (const r of rows) {
-      const total = r.up + r.down;
-      out.set(r.id, { uptime: total ? r.up / total : null, avgPing: r.avgPing });
-    }
-    return out;
+  // Up/down beats and summed response times per monitor and hour since
+  // `since`: the engine loads them once and keeps the 24h uptime in memory
+  // (aggregating every monitor's beats each time took seconds).
+  uptimeHours(since, monitorId = null) {
+    const cols = `monitor_id AS id, time / 3600000 AS hour, SUM(status = 1) AS up, SUM(status = 0) AS down,
+                  SUM(CASE WHEN status = 1 THEN ping END) AS pingSum, COUNT(CASE WHEN status = 1 THEN ping END) AS pingN`;
+    return monitorId == null
+      ? this.q(`SELECT ${cols} FROM heartbeats WHERE time >= ? GROUP BY monitor_id, hour ORDER BY monitor_id, hour`).all(since)
+      : this.q(`SELECT ${cols} FROM heartbeats WHERE monitor_id = ? AND time >= ? GROUP BY hour ORDER BY hour`).all(monitorId, since);
   }
 
-  pruneHeartbeats(before) {
-    return this.q('DELETE FROM heartbeats WHERE time < ?').run(before).changes;
+  // One monitor's uptime and average response over the last day, week and
+  // 30 days, in one pass over its own beats. Pending and blocked beats are
+  // neither up nor down.
+  monitorUptime(monitorId, now) {
+    const r = this.q(
+      `SELECT SUM(time >= ?2 AND status = 1) AS dUp, SUM(time >= ?2 AND status = 0) AS dDown,
+              AVG(CASE WHEN time >= ?2 AND status = 1 THEN ping END) AS dPing,
+              SUM(time >= ?3 AND status = 1) AS wUp, SUM(time >= ?3 AND status = 0) AS wDown,
+              AVG(CASE WHEN time >= ?3 AND status = 1 THEN ping END) AS wPing,
+              SUM(status = 1) AS mUp, SUM(status = 0) AS mDown, AVG(CASE WHEN status = 1 THEN ping END) AS mPing
+       FROM heartbeats WHERE monitor_id = ?1 AND time >= ?4`
+    ).get(monitorId, now - 86400000, now - 7 * 86400000, now - 30 * 86400000);
+    const pick = (up, down, avgPing) => ({ uptime: up + down ? up / (up + down) : null, avgPing: avgPing ?? null });
+    return { day: pick(r.dUp ?? 0, r.dDown ?? 0, r.dPing), week: pick(r.wUp ?? 0, r.wDown ?? 0, r.wPing), month: pick(r.mUp ?? 0, r.mDown ?? 0, r.mPing) };
+  }
+
+  // At most `limit` at a time, so the engine can let other work run between
+  // batches (one big DELETE held the server up for seconds).
+  pruneHeartbeats(before, limit = -1) {
+    return this.q('DELETE FROM heartbeats WHERE id IN (SELECT id FROM heartbeats WHERE time < ? LIMIT ?)').run(before, limit).changes;
   }
 
   // ---- notifications ------------------------------------------------------

@@ -8,7 +8,8 @@ const BEAT_BUFFER = 60;
 // When a child fails we re-probe its parents, unless they were checked
 // very recently (keeps a burst of child failures from hammering the parent).
 const PROBE_FRESHNESS_MS = 5000;
-const UPTIME_CACHE_MS = 30000;
+const HOUR = 3600000;
+const PRUNE_BATCH = 5000;
 const UNREACHABLE_TYPES = new Set(['ping', 'tcp', 'dns']);
 
 export function describeTarget(m) {
@@ -65,7 +66,6 @@ export class Engine {
     this.graph = new Graph([], []);
     this.version = 1;
     this.pending = new Set();
-    this.uptimeCache = null;
     this.pruneTimer = null;
     // Value problems: `${problemId}:${monitorId}` -> { problemId, monitorId,
     // state: 'open' | 'ok' | 'unknown', since, value, hits }. Loaded once.
@@ -90,6 +90,7 @@ export class Engine {
   }
 
   stop() {
+    this.stopped = true;
     for (const rt of this.runtime.values()) this.cancel(rt.timer);
     this.cancel(this.pruneTimer);
   }
@@ -111,6 +112,7 @@ export class Engine {
   reload(changed = []) {
     const list = this.store.listMonitors();
     const fresh = new Map(list.map((m) => [m.id, m]));
+    const added = [];
     for (const [id, rt] of this.runtime) {
       if (!fresh.has(id)) {
         this.cancel(rt.timer);
@@ -134,8 +136,11 @@ export class Engine {
         inflight: null,
         push: null,
         beats: beats.map((b) => [b.time, b.status, b.ping]),
+        hours: [], // [hour, up, down, pingSum, pingN] for the last 24h, oldest first
       });
+      added.push(m.id);
     }
+    this.#loadHours(added);
     this.monitors = fresh;
     if (!this.pstate) this.pstate = new Map(this.store.listProblemState().map((x) => [`${x.problemId}:${x.monitorId}`, { ...x, hits: 0 }]));
     for (const [key, x] of this.pstate) if (!fresh.has(x.monitorId)) this.pstate.delete(key);
@@ -387,6 +392,7 @@ export class Engine {
     rt.ping = ping;
     rt.lastCheck = time;
     rt.beats.push([time, status, ping]);
+    this.#countHour(rt, time, status, ping);
     if (rt.beats.length > BEAT_BUFFER) rt.beats.splice(0, rt.beats.length - BEAT_BUFFER);
     this.version++;
   }
@@ -802,20 +808,49 @@ export class Engine {
     return s;
   }
 
-  #uptime() {
-    const now = this.now();
-    if (!this.uptimeCache || now - this.uptimeCache.at > UPTIME_CACHE_MS) {
-      this.uptimeCache = { at: now, day: this.store.uptimeSince(now - 86400000) };
+  // The 24h uptime comes from hourly counts kept in memory: read from the
+  // heartbeats once per monitor, then counted as beats are recorded.
+  #loadHours(ids) {
+    if (!ids.length) return;
+    const since = (Math.floor(this.now() / HOUR) - 23) * HOUR;
+    const rows = ids.length > 20 ? this.store.uptimeHours(since) : ids.flatMap((id) => this.store.uptimeHours(since, id));
+    const wanted = new Set(ids);
+    for (const r of rows) {
+      if (wanted.has(r.id)) this.runtime.get(r.id).hours.push([r.hour, r.up, r.down, r.pingSum ?? 0, r.pingN]);
     }
-    return this.uptimeCache.day;
+  }
+
+  #countHour(rt, time, status, ping) {
+    const hour = Math.floor(time / HOUR);
+    let b = rt.hours.at(-1);
+    if (b?.[0] !== hour) rt.hours.push((b = [hour, 0, 0, 0, 0]));
+    if (status === UP) b[1]++;
+    if (status === DOWN) b[2]++;
+    if (status === UP && ping != null) {
+      b[3] += ping;
+      b[4]++;
+    }
+    while (rt.hours[0][0] <= hour - 24) rt.hours.shift();
+  }
+
+  #uptime24(rt) {
+    const from = Math.floor(this.now() / HOUR) - 23;
+    let up = 0, down = 0, pingSum = 0, pingN = 0;
+    for (const [hour, u, d, ps, pn] of rt.hours) {
+      if (hour < from) continue;
+      up += u;
+      down += d;
+      pingSum += ps;
+      pingN += pn;
+    }
+    return { uptime: up + down ? up / (up + down) : null, avgPing: pingN ? pingSum / pingN : null };
   }
 
   snapshot() {
     const memo = new Map();
-    const uptime = this.#uptime();
     const monitors = [...this.monitors.values()].map((m) => {
       const rt = this.runtime.get(m.id);
-      const u = uptime.get(m.id);
+      const u = this.#uptime24(rt);
       return {
         id: m.id,
         name: m.name,
@@ -832,22 +867,29 @@ export class Engine {
         ping: rt.ping,
         lastCheck: rt.lastCheck,
         beats: m.type === 'group' ? [] : rt.beats.slice(-40),
-        uptime24: u?.uptime ?? null,
-        avgPing24: u?.avgPing ?? null,
+        uptime24: u.uptime,
+        avgPing24: u.avgPing,
       };
     });
     return { version: this.version, monitors, open: this.openProblems() };
   }
 
   #prune() {
-    const run = () => {
+    // In batches, letting checks and requests in between: one DELETE of a
+    // day's beats held the whole server up.
+    const run = async () => {
+      this.pruneTimer = this.schedule(() => this.#track(run()), 6 * 3600 * 1000);
       const { retentionDays } = this.store.getSettings();
       const before = this.now() - Number(retentionDays) * 86400000;
-      const n = this.store.pruneHeartbeats(before);
+      let n = 0;
+      for (let k = PRUNE_BATCH; k === PRUNE_BATCH; n += k) {
+        if (this.stopped) return;
+        k = this.store.pruneHeartbeats(before, PRUNE_BATCH);
+        if (k === PRUNE_BATCH) await new Promise((resolve) => setImmediate(resolve));
+      }
       this.store.pruneAlerts(before);
       if (n) log.info(`Pruned ${n} heartbeats older than ${retentionDays} days`);
-      this.pruneTimer = this.schedule(run, 6 * 3600 * 1000);
     };
-    run();
+    this.#track(run());
   }
 }

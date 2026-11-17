@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.20.9
+
+- **Fixed: opening a monitor's page froze the whole add-on for seconds.** The page's uptime figures (24 hours, 7 and 30 days) added up the history of every monitor, not just that one, and the page asked again every 15 seconds. Saving an edit opens that page, so saves looked like they took 10 seconds or more, and meanwhile nothing else ran: other pages, checks (whose timeouts ran out, so healthy monitors could look down) and alerts. With 407 monitors and two weeks of history at one CPU core, the page's request went from 13 seconds (with every other request waiting) to under 0.1 second.
+- The dashboard's 24-hour uptime is now counted as checks come in, instead of being read from the whole history every 30 seconds (over half a second each time on that test).
+- Old history is deleted in small batches, so the cleanup every 6 hours doesn't hold the add-on up either.
+
 ## 0.20.8
 
 - **Big setups no longer bog down when a lot changes at once.** When a monitor high up comes back, everything below it is checked straight away, and at startup everything is. That used to start every check at the same moment: hundreds of pings and every SNMP walk together. On a small host that starved the CPU, so healthy SNMP devices timed out and went down (false alerts), alerts sent at that moment (resolved ones especially) timed out, and the add-on could take the host down with it. Now at most 16 checks run at once (4 SNMP), and the rest wait their turn; a check's timeout starts when it runs. On a 407-monitor test at half a CPU core, bringing the top monitor back went from 47 false alerts and a stalled server to none.

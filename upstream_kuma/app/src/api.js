@@ -403,9 +403,7 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
 
   route('GET', '/api/monitors/:id/uptime', ({ params, view }) => {
     const m = seeMonitor(params.id, view());
-    const now = Date.now();
-    const pick = (since) => store.uptimeSince(since).get(m.id) ?? { uptime: null, avgPing: null };
-    return { day: pick(now - 86400000), week: pick(now - 7 * 86400000), month: pick(now - 30 * 86400000) };
+    return store.monitorUptime(m.id, Date.now());
   }, 'view');
 
   // ---- tags ----------------------------------------------------------------
