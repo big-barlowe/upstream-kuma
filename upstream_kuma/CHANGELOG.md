@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.20.8
+
+- **Big setups no longer bog down when a lot changes at once.** When a monitor high up comes back, everything below it is checked straight away, and at startup everything is. That used to start every check at the same moment: hundreds of pings and every SNMP walk together. On a small host that starved the CPU, so healthy SNMP devices timed out and went down (false alerts), alerts sent at that moment (resolved ones especially) timed out, and the add-on could take the host down with it. Now at most 16 checks run at once (4 SNMP), and the rest wait their turn; a check's timeout starts when it runs. On a 407-monitor test at half a CPU core, bringing the top monitor back went from 47 false alerts and a stalled server to none.
+- **Edits and Check now go first.** They overtake routine checks in the queue, as do the re-checks of a parent before a monitor is called down.
+- **Fixed: changing a monitor's address back could leave it down for a minute.** If a check with the old address was still running, the edit (or Check now) got that check's result. Now it gets a check of its own.
+- Monitors with the same interval no longer all check in the same second: each check is scheduled a few percent early or late, so they spread out.
+
 ## 0.20.7
 
 - **Failed alerts are tried again.** If a service doesn't answer (the "operation was aborted due to timeout" some resolved alerts hit), can't be reached, or is busy, the alert is sent again after 5 seconds, 30 seconds and 2 minutes. If it refuses the alert (a wrong URL or token), it isn't. Send test still reports at once.

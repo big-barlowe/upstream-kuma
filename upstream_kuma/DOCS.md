@@ -4,6 +4,8 @@
 
 Every monitor runs on its own interval, but it only touches the network when its **parents are up**.
 
+At most 16 checks run at once (4 of them SNMP), so a big setup doesn't swamp a small host when everything is checked together: at startup, or when a monitor high up comes back and everything below it is checked straight away. The rest wait their turn, and a check's timeout only starts when it runs. **Check now** and edits go to the front of the queue.
+
 | Status | Meaning |
 |---|---|
 | **Up** | The last check passed. |

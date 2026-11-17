@@ -338,3 +338,85 @@ test('graph rejects cycles', () => {
   assert.equal(g.wouldCycle(1, 3), false);
   assert.equal(new Graph([1, 2], [{ parentId: 1, childId: 2 }, { parentId: 2, childId: 1 }]).hasCycle(), true);
 });
+
+// ---- the check queue ----
+
+// Checks that finish when told to: `running` lists the names being checked.
+function slowSetup(concurrency) {
+  const store = new Store(':memory:');
+  const running = [];
+  const finish = new Map();
+  const slow = (m) => new Promise((resolve) => {
+    running.push(m.name);
+    finish.set(m.name, () => {
+      running.splice(running.indexOf(m.name), 1);
+      resolve({ ok: true, ping: 1, msg: 'ok' });
+    });
+  });
+  const ids = {};
+  const add = (name, type = 'ping', parents = []) => {
+    ids[name] = store.createMonitor({ name, type, config: {}, interval: 60, retries: 0, retryInterval: 20, timeout: 5, resendInterval: 0, parentMode: 'all', active: true });
+    for (const p of parents) store.addEdge(ids[p], ids[name]);
+  };
+  const delays = [];
+  const engine = new Engine({
+    store, checkers: { ping: slow, snmp: slow }, notify: async () => [], concurrency, jitter: () => 1,
+    schedule: (fn, ms) => { delays.push(ms); return null; }, cancel: () => {},
+  });
+  const tick = () => new Promise((r) => setImmediate(r));
+  return { store, engine, ids, add, running, finish: async (name) => { finish.get(name)(); await tick(); await tick(); }, tick, delays };
+}
+
+test('only so many checks run at once; urgent ones go first', async () => {
+  const t = slowSetup({ snmp: 1, other: 2 });
+  for (const n of ['A', 'B', 'C', 'D']) t.add(n);
+  t.add('S1', 'snmp');
+  t.add('S2', 'snmp');
+  t.engine.reload();
+  for (const n of ['A', 'B', 'C', 'S1', 'S2']) t.engine.check(t.ids[n]);
+  await t.tick();
+  assert.deepEqual(t.running, ['A', 'B', 'S1']); // SNMP has its own, smaller pool
+  assert.deepEqual(t.engine.queued, { snmp: 1, other: 1 });
+  // Check now on D overtakes C, which was only routine
+  t.engine.refresh(t.ids.D);
+  await t.finish('A');
+  assert.deepEqual(t.running, ['B', 'S1', 'D']);
+  await t.finish('B');
+  assert.deepEqual(t.running, ['S1', 'D', 'C']);
+  await t.finish('S1');
+  assert.deepEqual(t.running, ['D', 'C', 'S2']);
+  for (const n of ['D', 'C', 'S2']) await t.finish(n);
+  assert.deepEqual(t.engine.queued, { snmp: 0, other: 0 });
+  // the next check is the interval give or take 5%
+  assert.equal(t.delays.at(-1), 63000);
+});
+
+test('a check whose parent went down while it waited is blocked, not run', async () => {
+  const t = slowSetup({ other: 1 });
+  t.add('Router');
+  t.add('Box', 'ping', ['Router']);
+  t.add('Other');
+  t.engine.reload();
+  t.engine.check(t.ids.Other);
+  t.engine.check(t.ids.Box); // waits for Other
+  await t.tick();
+  t.engine.runtime.get(t.ids.Router).status = DOWN; // meanwhile
+  await t.finish('Other');
+  assert.deepEqual(t.running, []);
+  assert.equal(t.engine.runtime.get(t.ids.Box).status, BLOCKED);
+});
+
+test('an edit or Check now while a check is running gets a check of its own', async () => {
+  const t = slowSetup({ other: 4 });
+  t.add('Box');
+  t.engine.reload();
+  t.engine.check(t.ids.Box); // with the old address, say
+  await t.tick();
+  assert.deepEqual(t.running, ['Box']);
+  t.engine.refresh(t.ids.Box); // the edit
+  t.engine.refresh(t.ids.Box); // and Check now: still just one more
+  await t.finish('Box');
+  assert.deepEqual(t.running, ['Box'], 'checked again, from now');
+  await t.finish('Box');
+  assert.deepEqual(t.running, []);
+});

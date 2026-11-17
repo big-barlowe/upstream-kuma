@@ -45,8 +45,15 @@ export function formatDuration(ms) {
  * on the highest failing monitor, and everything beneath it is marked
  * BLOCKED and listed in that single alert instead of alerting separately.
  */
+// How many checks run at once, per kind. Checking everything below a
+// monitor that just came back (or everything at startup) at once starved the
+// CPU on small hosts: SNMP replies weren't read before their timeout, so
+// healthy devices went down, and alerts sent meanwhile timed out. The rest
+// wait their turn; a check's timeout starts when it runs.
+export const CONCURRENCY = { snmp: 4, other: 16 };
+
 export class Engine {
-  constructor({ store, checkers, notify, now = Date.now, schedule = setTimeout, cancel = clearTimeout }) {
+  constructor({ store, checkers, notify, now = Date.now, schedule = setTimeout, cancel = clearTimeout, concurrency = CONCURRENCY, jitter = Math.random }) {
     this.store = store;
     this.checkers = checkers;
     this.notify = notify;
@@ -63,6 +70,9 @@ export class Engine {
     // Value problems: `${problemId}:${monitorId}` -> { problemId, monitorId,
     // state: 'open' | 'ok' | 'unknown', since, value, hits }. Loaded once.
     this.pstate = null;
+    // check slots: per pool, how many run and who waits (urgent ones first)
+    this.pools = Object.fromEntries(Object.entries(concurrency).map(([k, max]) => [k, { max, running: 0, urgent: [], normal: [] }]));
+    this.jitter = jitter;
   }
 
   // ---- lifecycle ----------------------------------------------------------
@@ -151,7 +161,7 @@ export class Engine {
     if (this.#isPassThrough(m)) {
       await Promise.all(this.graph.childrenOf(id).map((c) => this.refresh(c, seen)));
     } else {
-      await this.check(id);
+      await this.check(id, { urgent: true, fresh: true }); // someone just asked for it
     }
   }
 
@@ -225,25 +235,71 @@ export class Engine {
   async #verifyUpstream(id) {
     const targets = [...this.#probeTargets(id)];
     for (const p of targets) this.runtime.get(p).lastProbe = this.now();
-    await Promise.all(targets.map((p) => this.check(p)));
+    await Promise.all(targets.map((p) => this.check(p, { urgent: true })));
     return this.gateState(id);
   }
 
   // ---- checking -----------------------------------------------------------
 
-  check(id) {
+  // `urgent`: someone is waiting on it (Check now, an edit, a child about to
+  // go down): it goes ahead of routine checks, also if already waiting.
+  // `fresh`: it must start from now (an edit, Check now): a check already
+  // running went out with what it had (the old address), so another follows.
+  check(id, { urgent = false, fresh = false } = {}) {
     const rt = this.runtime.get(id);
     if (!rt) return Promise.resolve();
     if (!rt.inflight) {
-      rt.inflight = this.#doCheck(id).finally(() => {
+      rt.inflight = this.#doCheck(id, urgent).finally(() => {
         rt.inflight = null;
       });
+    } else if (rt.waiting) {
+      if (urgent) this.#hurry(rt.waiting); // it reads the monitor when its turn comes
+    } else if (fresh) {
+      rt.again ??= rt.inflight.then(() => {
+        rt.again = null;
+        return this.check(id, { urgent: true });
+      });
+      return rt.again;
     }
     return rt.inflight;
   }
 
-  async #doCheck(id) {
-    const m = this.monitors.get(id);
+  // A slot to run a check in; resolves to its release function.
+  #slot(m, rt, urgent) {
+    const pool = this.pools[m.type === 'snmp' ? 'snmp' : 'other'];
+    if (!pool) return Promise.resolve(() => {});
+    const release = () => {
+      const next = pool.urgent.shift() ?? pool.normal.shift();
+      if (next) next.go();
+      else pool.running--;
+    };
+    if (pool.running < pool.max) {
+      pool.running++;
+      return Promise.resolve(release);
+    }
+    return new Promise((resolve) => {
+      const entry = { pool, urgent, go: () => { rt.waiting = null; resolve(release); } };
+      rt.waiting = entry;
+      (urgent ? pool.urgent : pool.normal).push(entry);
+    });
+  }
+
+  #hurry(entry) {
+    if (entry.urgent) return;
+    const i = entry.pool.normal.indexOf(entry);
+    if (i < 0) return;
+    entry.pool.normal.splice(i, 1);
+    entry.urgent = true;
+    entry.pool.urgent.push(entry);
+  }
+
+  // Checks waiting for a slot, per pool (for the log and tests).
+  get queued() {
+    return Object.fromEntries(Object.entries(this.pools).map(([k, p]) => [k, p.urgent.length + p.normal.length]));
+  }
+
+  async #doCheck(id, urgent = false) {
+    let m = this.monitors.get(id);
     if (!m || this.#isPassThrough(m)) return;
     const rt = this.runtime.get(id);
     this.cancel(rt.timer);
@@ -252,8 +308,22 @@ export class Engine {
         this.#setBlocked(id);
         return;
       }
-      const watching = this.#watching(m);
-      const result = await this.#runChecker(m, probeOids(watching));
+      let result;
+      let watching;
+      const release = m.type === 'push' ? () => {} : await this.#slot(m, rt, urgent);
+      try {
+        // things may have changed while it waited for a slot
+        m = this.monitors.get(id);
+        if (!m || this.#isPassThrough(m)) return;
+        if (!this.gateOpen(id)) {
+          this.#setBlocked(id);
+          return;
+        }
+        watching = this.#watching(m);
+        result = await this.#runChecker(m, probeOids(watching));
+      } finally {
+        release();
+      }
       if (!this.monitors.has(id) || !this.monitors.get(id).active) return;
       // What the check collected (SNMP), kept as the monitor's latest snapshot;
       // a failed check leaves the last one in place.
@@ -302,7 +372,9 @@ export class Engine {
     if (!m || !rt || this.#isPassThrough(m)) return;
     this.cancel(rt.timer);
     const delay = rt.status === PENDING ? m.retryInterval : m.interval;
-    rt.timer = this.schedule(() => this.check(id), delay * 1000);
+    // ±5%, so monitors with the same interval drift apart instead of all
+    // checking in the same second, every interval
+    rt.timer = this.schedule(() => this.check(id), delay * 1000 * (0.95 + 0.1 * this.jitter()));
   }
 
   #record(m, status, result, important) {
