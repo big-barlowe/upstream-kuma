@@ -129,7 +129,7 @@ Favicons and image URLs are downloaded by the add-on and stored in its database,
 - **Tags**: *all monitors*, or the monitors with any (or all) of the tag pills you pick, just like the tag filter. **Advanced** takes an expression such as `Camera & !Cabin`, and renaming a tag updates the rules that use it.
 - **Upstream** (the checkbox column): a rule for some tags normally fires when a tagged monitor is the one at fault. With this ticked it also fires when an untagged monitor takes tagged ones down with it (say, the switch in front of your *Critical* NAS), and sends that alert, which lists them. It's on for new rules.
 
-An alert goes to every channel of every rule that matches it, once per channel. Alerts are still raised only for the **monitor that is actually down**, the top of the affected branch. A monitor's edit form shows where its alerts currently go. A rule that can't send anything (no channel, or its tags were deleted) gets a red edge; hover it to see why. With no rules, nothing is sent.
+An alert goes to every channel of every rule that matches it, once per channel. A resolved alert also goes to every channel the alert it answers went to, so whoever heard something broke hears it's fixed. Alerts are still raised only for the **monitor that is actually down**, the top of the affected branch. A monitor's edit form shows where its alerts currently go. A rule that can't send anything (no channel, or its tags were deleted) gets a red edge; hover it to see why. With no rules, nothing is sent.
 
 **Channels** are where alerts are delivered:
 

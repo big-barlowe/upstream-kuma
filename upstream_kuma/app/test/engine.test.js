@@ -171,6 +171,80 @@ test('recovery sends a resolved alert and re-checks downstream one level at a ti
   assert.deepEqual(t.alerts[2].affected.map((a) => a.name), ['Microservice 2.1.1']);
 });
 
+test('a monitor blocked after its own down alert still sends a resolved one', async () => {
+  const t = setup();
+  t.results['Host 2'] = false;
+  await t.engine.start();
+  await t.engine.idle();
+  t.advance(10 * 60_000);
+  // then its parent goes down too: Host 2 is blocked, not down
+  t.results.WAN = false;
+  await t.engine.check(t.ids.WAN);
+  await t.engine.idle();
+  assert.equal(t.status('Host 2'), BLOCKED);
+  t.advance(5 * 60_000);
+  // both come back
+  t.results.WAN = true;
+  t.results['Host 2'] = true;
+  await t.engine.check(t.ids.WAN);
+  await t.engine.idle();
+  assert.equal(t.status('Host 2'), UP);
+  assert.deepEqual(t.alerts.map((a) => a.title), [
+    'Alert: Host 2 is unreachable',
+    'Alert: WAN is unreachable',
+    'Resolved: WAN is back up',
+    'Resolved: Host 2 is back up',
+  ]);
+  assert.match(t.alerts[3].message, /after 15m 0s down/); // since its own down alert
+  // and only once: the next check is an ordinary up
+  await t.engine.check(t.ids['Host 2']);
+  await t.engine.idle();
+  assert.equal(t.alerts.length, 4);
+});
+
+test('a resolved alert goes wherever the down alert went', async () => {
+  const t = setup();
+  t.results['Host 2'] = false;
+  await t.engine.start();
+  await t.engine.idle();
+  const phone = t.store.listNotifications()[0].id;
+  assert.deepEqual(t.store.listAlerts(1)[0].delivered.map((d) => d.id), [phone]);
+  // the rule that sent it is gone (or no longer matches): the resolved alert
+  // still follows the down alert
+  for (const r of t.store.listRules()) t.store.deleteRule(r.id);
+  t.results['Host 2'] = true;
+  await t.engine.check(t.ids['Host 2']);
+  await t.engine.idle();
+  const up = t.store.listAlerts(1)[0];
+  assert.equal(up.kind, 'up');
+  assert.deepEqual(up.delivered.map((d) => d.id), [phone]);
+});
+
+test('after a restart, a resolved alert counts from the down alert', async () => {
+  const t = setup();
+  t.results['Host 2'] = false;
+  await t.engine.start();
+  await t.engine.idle();
+  for (let i = 0; i < 5; i++) {
+    t.advance(60_000);
+    await t.engine.check(t.ids['Host 2']);
+  }
+  let clock = t.engine.now() + 60_000;
+  const again = new Engine({
+    store: t.store,
+    checkers: t.engine.checkers,
+    notify: async (c, a) => { t.alerts.push(a); return []; },
+    now: () => clock,
+    schedule: () => null,
+    cancel: () => {},
+  });
+  t.results['Host 2'] = true;
+  await again.start();
+  await again.idle();
+  assert.equal(t.alerts.at(-1).title, 'Resolved: Host 2 is back up');
+  assert.match(t.alerts.at(-1).message, /after 6m 0s down/);
+});
+
 test("parentMode 'any' keeps a monitor reachable while one parent is up", async () => {
   const t = setup();
   t.add('Shared NAS', 'tcp', ['Host 1', 'Host 2'], { parentMode: 'any' });

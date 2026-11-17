@@ -325,10 +325,14 @@ export class Engine {
     rt.retries = 0;
     rt.downBeats = 0;
     this.#record(m, UP, result, prev !== UP);
-    if (prev === DOWN) {
-      const downFor = rt.downSince ? this.now() - rt.downSince : 0;
+    // Back up after a down alert: also when it was blocked in between (its
+    // parent went down after it did), or the add-on restarted. The alert log
+    // says whether its last down alert has been answered yet.
+    const episode = prev === UP ? null : this.store.openEpisode(m.id);
+    if (prev === DOWN || episode) {
+      const since = episode?.since ?? rt.downSince;
       rt.downSince = null;
-      this.#track(this.#sendRecovery(m, downFor));
+      this.#track(this.#sendRecovery(m, since ? this.now() - since : 0));
     }
     if (prev === DOWN || prev === BLOCKED || prev === null) this.#cascade(m.id);
   }
@@ -585,7 +589,10 @@ export class Engine {
 
   // The channels the notification rules pick for this alert. Down, its
   // reminders and up belong to the built-in "down" problem; a resolved alert
-  // goes out unless its problem has them off.
+  // goes out unless its problem has them off, and also goes wherever the
+  // alerts it answers went: the rules may not pick those channels for it
+  // (one that matched through the monitors a down alert listed, which are
+  // no longer cut off), and whoever was told it broke should hear it's fixed.
   #channelsFor(m, kind, affected, problem) {
     problem ??= this.store.listProblems().find((p) => p.kind === 'down');
     if (!problem || ((kind === 'up' || kind === 'resolved') && problem.config.recovery === false)) return [];
@@ -594,7 +601,14 @@ export class Engine {
       { rules: this.store.listRules(), tags: this.store.listTags(), tagsOf: (id) => tagMap.get(id) ?? [] },
       { problemId: problem.id, severity: problem.severity, monitorId: m.id, affectedIds: affected.map((a) => a.id) },
     );
-    return this.store.listNotifications().filter((n) => n.active && channelIds.has(n.id));
+    const ids = new Set(channelIds);
+    if (kind === 'up' || kind === 'resolved') {
+      const episode = kind === 'up'
+        ? this.store.openEpisode(m.id)
+        : this.store.openEpisode(m.id, { opened: 'problem', closed: 'resolved', problemId: problem.id });
+      for (const id of episode?.channelIds ?? []) ids.add(id);
+    }
+    return this.store.listNotifications().filter((n) => n.active && ids.has(n.id));
   }
 
   #formatTime(t) {

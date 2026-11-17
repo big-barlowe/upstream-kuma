@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.20.6
+
+- **Fixed: resolved alerts could go missing.**
+  - A resolved alert now goes to every channel its down alert went to. Its channels used to be picked again by the rules at recovery, so a rule that matched the down alert through the monitors it listed (a tagged group or monitor downstream) could match nothing then, and the resolved alert went nowhere.
+  - A monitor that went down, then was blocked because its parent went down too, never sent its own resolved alert when it came back. It does now.
+  - After a restart, "up again after …" counted from the last check, not from when it went down.
+
 ## 0.20.5
 
 - **Google Chat alerts are cards.** The status as a coloured line, the details (target, reason, time, value) each with an icon, and the **flow**: the monitors above the one at fault, it, and the tree of everything it took down, in the Falls' colours (a long tree folds). If Chat ever refuses the card, the alert is sent as text instead, so it still arrives. **Send test** shows an example card.

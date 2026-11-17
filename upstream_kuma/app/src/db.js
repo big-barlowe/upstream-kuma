@@ -249,6 +249,11 @@ export const MIGRATIONS = [
   `
   ALTER TABLE users ADD COLUMN oidc_name TEXT NOT NULL DEFAULT '';
   `,
+  // v13: a monitor's alerts, newest first, to find the ones a resolved alert
+  // answers (Store.openEpisode).
+  `
+  CREATE INDEX alerts_monitor ON alerts(monitor_id, time);
+  `,
 ];
 
 const TAG_COLS = 'id, name, color, icon, icon_updated_at AS iconV';
@@ -782,6 +787,25 @@ export class Store {
       problemId: r.problem_id,
       severity: r.severity,
     }));
+  }
+
+  // The alerts a monitor's resolved alert would answer: those of kind
+  // `opened` since its last `closed` one (for a value problem, of that
+  // problem only). { since: when the first went out, channelIds: every
+  // channel they went to }, or null when there are none (the last one was
+  // `closed`, or the log has none).
+  openEpisode(monitorId, { opened = 'down', closed = 'up', problemId = null } = {}) {
+    const rows = this.q(`SELECT time, kind, delivered FROM alerts
+      WHERE monitor_id = ? AND kind IN (?, ?) AND (? IS NULL OR problem_id = ?)
+      ORDER BY time DESC, id DESC LIMIT 500`).all(monitorId, opened, closed, problemId, problemId);
+    let since = null;
+    const channelIds = new Set();
+    for (const r of rows) {
+      if (r.kind === closed) break;
+      since = r.time;
+      for (const d of JSON.parse(r.delivered)) if (d.id != null) channelIds.add(d.id);
+    }
+    return since == null ? null : { since, channelIds };
   }
 
   pruneAlerts(before) {
