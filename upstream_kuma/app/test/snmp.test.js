@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { encodeMessage, decodeMessage, PDU, SnmpClient } from '../src/snmp.js';
 import { mib, agent } from './fake-snmp.js';
 import { checkSnmp, addRates, parseExtraOids, cardText } from '../src/checkers/snmp.js';
+import { Auth } from '../src/auth.js';
 import { createApi } from '../src/api.js';
 import { Store } from '../src/db.js';
 import { Engine } from '../src/engine.js';
@@ -175,7 +176,7 @@ test('display settings change what is shown without losing the data', async () =
   const store = new Store(':memory:');
   const engine = new Engine({ store, checkers: { snmp: async () => ({ ok: true, ping: 1, msg: 'ok', data: { n: 1 } }) }, notify: async () => [], schedule: () => null, cancel: () => {} });
   const icons = { describe: () => null, sync: () => {}, hasUpload: () => false, saveUpload: () => {} };
-  const handle = createApi({ store, engine, icons });
+  const handle = createApi({ store, engine, icons, auth: new Auth({ store, mode: 'off' }) });
   const call = (method, path, body) => handle({ method }, new URL(`http://x${path}`), body);
   const created = await call('POST', '/api/monitors', { name: 'Switch', type: 'snmp', config: { host: '10.0.0.2' } });
   await engine.idle();

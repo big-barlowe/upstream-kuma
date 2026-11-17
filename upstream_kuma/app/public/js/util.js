@@ -1,15 +1,33 @@
 // All URLs are relative so the app works under Home Assistant ingress,
 // which serves it from /api/hassio_ingress/<token>/.
+// Every change is sent as JSON, even without a body: the server refuses
+// other content types, which a page on another site can't send without
+// asking first (CORS), so it can't act with this browser's sign-in.
 export async function api(path, { method = 'GET', body } = {}) {
   const res = await fetch(`api/${path}`, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
+    headers: method !== 'GET' ? { 'Content-Type': 'application/json' } : {},
+    body: method !== 'GET' ? JSON.stringify(body ?? {}) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (res.status === 401 && data.login) {
+    // signed out (or the session ended): sign in, then come back here
+    location.replace(`login.html${location.hash}`);
+    await new Promise(() => {});
+  }
+  if (!res.ok) throw Object.assign(new Error(data.error || `HTTP ${res.status}`), { status: res.status });
   return data;
 }
+
+// Who is signed in (api('me'), set by app.js before the first render).
+// Viewers see controls for changing things hidden; the server refuses them
+// anyway.
+export const session = {
+  me: null,
+  get admin() {
+    return this.me?.role === 'admin';
+  },
+};
 
 // Tiny hyperscript: h('div', { class: 'x', onclick }, child, [children], 'text')
 export function h(tag, attrs, ...children) {

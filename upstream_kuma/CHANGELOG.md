@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.20.0
+
+- **Accounts and sign-in.** Upstream Kuma run on its own now asks you to sign in. The first time you open it after updating, it asks you to create the admin account: do that straight away, since until then whoever opens it can. Under Home Assistant nothing changes in the sidebar: Home Assistant has signed you in, so you're an admin there. The add-on's direct port (`allow_direct_access`) now shows the sign-in page instead of the app.
+- **Viewers.** Under **Settings → Users**, make accounts that are admins (everything) or viewers. A viewer has a **scope**, picked by tag like the filter (tags, any or all, or an expression): it sees those monitors and everything upstream of them, so it can tell when the cause is further up, and only the tags its monitors carry, the problems open on them and the alerts about them. Viewers can't add, edit, pause, move or tag anything, and their Settings page is just **Account**: their password, and signing out.
+- **Single sign-on with OpenID Connect** (Authentik, Authelia, Keycloak, Google, Microsoft Entra, …), under Settings → Users. A sign-in finds the account by its linked identity or its email address; optionally it creates a viewer for anyone new, makes members of a group admins, and turns password sign-in off for everyone but admins.
+- **The sign-in page** has the warbling node, with streams flowing out of it now and then.
+- **`AUTH=off`** (Docker) turns accounts off, for a proxy that signs people in itself.
+
 ## 0.19.0
 
 - **Groups are round in the Falls**, showing just their icon, big: a logo fills a light disc, ringed in the group's status colour. Hover a group (or Tab to it) to see its name in a label under it; a traced group keeps its label. Groups usually stand for a place, a site or a building, so they now stand out as the points where things branch. In the tree, a row with a group in it is as tall as the group.

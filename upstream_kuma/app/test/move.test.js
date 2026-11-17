@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Store } from '../src/db.js';
 import { Engine } from '../src/engine.js';
+import { Auth } from '../src/auth.js';
 import { createApi } from '../src/api.js';
 
 // WAN ─ Router ─ NAS ─ Plex
@@ -18,7 +19,7 @@ function setup() {
     cancel: () => {},
   });
   const icons = { describe: () => null, sync: () => {}, hasUpload: () => false, saveUpload: () => {} };
-  const handle = createApi({ store, engine, icons });
+  const handle = createApi({ store, engine, icons, auth: new Auth({ store, mode: 'off' }) });
   const call = (method, path, body) => handle({ method }, new URL(`http://x${path}`), body);
   const ids = {};
   const add = (name, ...parents) => {

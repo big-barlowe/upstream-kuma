@@ -2,8 +2,9 @@
 #
 #   docker compose up -d
 #
-# then open http://<this-machine>:8099. There is no login, so keep it on a
-# trusted network or behind a reverse proxy that adds one (see the guide).
+# then open http://<this-machine>:8099 and create the admin account (do that
+# first: until then, whoever opens it can). Put HTTPS in front of it before
+# opening it to the internet (see the guide).
 services:
   upstream-kuma:
     # Pin a version (e.g. :0.5.1) to update only when you choose to.
@@ -24,6 +25,9 @@ services:
       TZ: Etc/UTC
       # debug, info, warning or error
       LOG_LEVEL: info
+      # Only behind a proxy that signs people in itself: no accounts, everyone
+      # is an admin.
+      # AUTH: "off"
       # Optional: connect to Home Assistant for "HA entity" monitors and the
       # Home Assistant notification channel. HA_TOKEN is a long-lived access
       # token (your HA profile -> Security).

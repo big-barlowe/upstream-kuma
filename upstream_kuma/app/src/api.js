@@ -9,6 +9,8 @@ import { isOid } from './snmp.js';
 import { buildLibrary, mibLibrary, parseMib, setMibLibrary, splitModules } from './mib.js';
 import { parseTagExpr, renameInExpr } from '../public/js/filter.js';
 import { normalizeValueProblem, inScope, SEVERITIES } from './problems.js';
+import { PASSWORD_MIN, SESSION_COOKIE, clearCookie, cookie, hashPassword, parseCookies, publicUser, scopeView, sha256, verifyPassword } from './auth.js';
+import { CALLBACK_PATH, OIDC_DEFAULTS, Oidc, STATE_COOKIE, groupsOf } from './oidc.js';
 
 // A monitor's config without the keys that only change how its data is
 // shown, to tell whether what it checks has changed.
@@ -30,20 +32,43 @@ const ICON_HEADERS = {
 };
 
 export class RawResponse {
-  constructor(type, body, headers = {}) {
+  constructor(type, body, headers = {}, status = 200) {
     this.type = type;
     this.body = body;
     this.headers = headers;
+    this.status = status;
   }
 }
 
-// Builds the router. `ctx` = { store, engine, icons }.
-export function createApi({ store, engine, icons }) {
+const json = (payload, headers = {}) => new RawResponse('application/json', JSON.stringify(payload), { 'Cache-Control': 'no-store', ...headers });
+// Locations are relative, so they work behind any path prefix.
+const redirect = (location, headers = {}) => new RawResponse('text/plain; charset=utf-8', '', { Location: location, 'Cache-Control': 'no-store', ...headers }, 302);
+
+// Builds the router. `ctx` = { store, engine, icons, auth, oidc? }. `auth`
+// (an Auth from auth.js) says who each request is; routes are for admins
+// unless marked 'view' (viewers too, filtered to their scope) or 'public'.
+export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store }) }) {
+  if (!auth) throw new Error('createApi needs auth');
   const routes = [];
-  const route = (method, pattern, handler) => {
+  const route = (method, pattern, handler, access = 'admin') => {
     const keys = [];
     const re = new RegExp('^' + pattern.replace(/:(\w+)/g, (_, k) => (keys.push(k), '([^/]+)')) + '$');
-    routes.push({ method, re, keys, handler });
+    routes.push({ method, re, keys, handler, access });
+  };
+
+  // What a viewer may see (auth.js scopeView), or null for admins.
+  const viewFor = (user) => (user.role === 'admin' ? null : scopeView(user, {
+    monitorIds: engine.monitors.keys(),
+    parentsOf: (id) => engine.graph.parentsOf(id),
+    tagMap: store.monitorTagMap(),
+    tags: store.listTags(),
+  }));
+
+  // A monitor the request may look at: any for admins, visible ones for viewers.
+  const seeMonitor = (id, view) => {
+    const m = monitorOr404(id);
+    if (view && !view.visible.has(m.id)) throw new HttpError(404, 'Monitor not found');
+    return m;
   };
 
   // The MIB library: the bundled modules plus the uploaded ones. SNMP
@@ -115,9 +140,12 @@ export function createApi({ store, engine, icons }) {
     tagIds: store.monitorTagIds(m.id),
   });
 
-  route('GET', '/api/info', () => ({ version: VERSION, addon: isAddon, directAccess: config.allowDirectAccess }));
+  // Public: the Docker healthcheck polls it.
+  route('GET', '/api/info', () => ({ version: VERSION, addon: isAddon, directAccess: config.allowDirectAccess }), 'public');
 
-  route('GET', '/api/state', ({ query }) => {
+  // A viewer gets its visible monitors, with parents, children and tags
+  // trimmed to what it may see, and the problems open on them.
+  route('GET', '/api/state', ({ query, view }) => {
     if (query.v && Number(query.v) === engine.version) return { version: engine.version, unchanged: true };
     const snap = engine.snapshot();
     const tagMap = store.monitorTagMap();
@@ -127,10 +155,27 @@ export function createApi({ store, engine, icons }) {
     }
     snap.tags = store.listTags();
     snap.problems = store.listProblems().map(({ id, kind, name, severity }) => ({ id, kind, name, severity }));
+    const v = view();
+    if (v) {
+      const seen = (id) => v.visible.has(id);
+      snap.monitors = snap.monitors.filter((m) => seen(m.id));
+      for (const m of snap.monitors) {
+        m.parents = m.parents.filter(seen);
+        m.children = m.children.filter(seen);
+        m.tags = m.tags.filter((t) => v.tagIds.has(t));
+      }
+      snap.open = snap.open.filter((x) => seen(x.monitorId));
+      const open = new Set(snap.open.map((x) => x.problemId));
+      snap.problems = snap.problems.filter((p) => p.kind === 'down' || open.has(p.id));
+      snap.tags = snap.tags.filter((t) => v.tagIds.has(t.id));
+    }
     return snap;
-  });
+  }, 'view');
 
-  route('GET', '/api/events', () => store.recentEvents(50));
+  route('GET', '/api/events', ({ view }) => {
+    const v = view();
+    return v ? store.recentEvents(1000).filter((e) => v.visible.has(e.monitorId)).slice(0, 50) : store.recentEvents(50);
+  }, 'view');
 
   // ---- monitors -----------------------------------------------------------
 
@@ -255,29 +300,29 @@ export function createApi({ store, engine, icons }) {
     return { ok: true };
   });
 
-  route('GET', '/api/monitors/:id/heartbeats', ({ params, query }) => {
-    const m = monitorOr404(params.id);
+  route('GET', '/api/monitors/:id/heartbeats', ({ params, query, view }) => {
+    const m = seeMonitor(params.id, view());
     const hours = int(query.hours, 24, 1, 24 * 90);
     return store.heartbeatsSince(m.id, Date.now() - hours * 3600000);
-  });
+  }, 'view');
 
   // Images come from arbitrary sites, so make sure an SVG can never run
   // script in this origin, even if someone opens the URL directly.
-  route('GET', '/api/monitors/:id/icon', ({ params }) => {
-    const icon = store.getIcon(monitorOr404(params.id).id);
+  route('GET', '/api/monitors/:id/icon', ({ params, view }) => {
+    const icon = store.getIcon(seeMonitor(params.id, view()).id);
     if (!icon) throw new HttpError(404, 'No icon');
     return new RawResponse(icon.mime, icon.data, ICON_HEADERS);
-  });
+  }, 'view');
 
-  route('GET', '/api/monitors/:id/events', ({ params }) => store.importantHeartbeats(monitorOr404(params.id).id, 50));
+  route('GET', '/api/monitors/:id/events', ({ params, view }) => store.importantHeartbeats(seeMonitor(params.id, view()).id, 50), 'view');
 
   // The latest data the monitor's checks collected (SNMP): { at, data,
   // display }, at and data null before the first. `display` holds the
   // settings for how it is shown (extra OIDs, hidden items, the card).
-  route('GET', '/api/monitors/:id/data', ({ params }) => {
-    const m = monitorOr404(params.id);
+  route('GET', '/api/monitors/:id/data', ({ params, view }) => {
+    const m = seeMonitor(params.id, view());
     return { at: null, data: null, ...store.getMonitorData(m.id), display: displayOf(m) };
-  });
+  }, 'view');
 
   // Change how an SNMP monitor's data is shown: any of { oids, hide, card }.
   // The monitor is checked again so its card text follows.
@@ -292,8 +337,8 @@ export function createApi({ store, engine, icons }) {
   });
 
   // A page of everything the device reports, for the "All data" view.
-  route('GET', '/api/monitors/:id/snmp/walk', async ({ params, query }) => {
-    const m = monitorOr404(params.id);
+  route('GET', '/api/monitors/:id/snmp/walk', async ({ params, query, view }) => {
+    const m = seeMonitor(params.id, view());
     if (m.type !== 'snmp') throw new HttpError(400, 'Not an SNMP monitor');
     const start = query.start && isOid(query.start) ? query.start : undefined;
     try {
@@ -301,7 +346,7 @@ export function createApi({ store, engine, icons }) {
     } catch (err) {
       throw new HttpError(502, err.message);
     }
-  });
+  }, 'view');
 
   // ---- MIB library
 
@@ -315,7 +360,7 @@ export function createApi({ store, engine, icons }) {
     if (!hit) return null;
     const syn = hit.entry.syntax ?? {};
     return { name: hit.name, module: hit.entry.module, type: syn.tc ?? syn.base ?? null, enums: syn.enums ?? null, units: hit.entry.units ?? null, desc: hit.entry.desc ?? null };
-  });
+  }, 'view');
 
   // { files: [{ filename, text }] }. Each module in a file is stored on its
   // own, replacing an uploaded or bundled one of the same name.
@@ -356,12 +401,12 @@ export function createApi({ store, engine, icons }) {
     return { modules: mibLibrary().list() };
   });
 
-  route('GET', '/api/monitors/:id/uptime', ({ params }) => {
-    const m = monitorOr404(params.id);
+  route('GET', '/api/monitors/:id/uptime', ({ params, view }) => {
+    const m = seeMonitor(params.id, view());
     const now = Date.now();
     const pick = (since) => store.uptimeSince(since).get(m.id) ?? { uptime: null, avgPing: null };
     return { day: pick(now - 86400000), week: pick(now - 7 * 86400000), month: pick(now - 30 * 86400000) };
-  });
+  }, 'view');
 
   // ---- tags ----------------------------------------------------------------
 
@@ -432,6 +477,10 @@ export function createApi({ store, engine, icons }) {
           const expr = p.config.tagExpr && renameInExpr(p.config.tagExpr, existing.name, t.name);
           if (expr && expr !== p.config.tagExpr) store.updateProblem(p.id, { ...p, config: { ...p.config, tagExpr: expr } });
         }
+        for (const u of store.listUsers()) {
+          const expr = u.scope.tagExpr && renameInExpr(u.scope.tagExpr, existing.name, t.name);
+          if (expr && expr !== u.scope.tagExpr) store.updateUser(u.id, { scope: { ...u.scope, tagExpr: expr } });
+        }
       }
     });
     engine.touch();
@@ -446,11 +495,14 @@ export function createApi({ store, engine, icons }) {
     return { ok: true };
   });
 
-  route('GET', '/api/tags/:id/icon', ({ params }) => {
-    const icon = store.getTagIcon(tagOr404(params.id).id);
+  route('GET', '/api/tags/:id/icon', ({ params, view }) => {
+    const t = tagOr404(params.id);
+    const v = view();
+    if (v && !v.iconTags.has(t.id)) throw new HttpError(404, 'Tag not found');
+    const icon = store.getTagIcon(t.id);
     if (!icon) throw new HttpError(404, 'No icon');
     return new RawResponse(icon.mime, icon.data, ICON_HEADERS);
-  });
+  }, 'view');
 
   // Add (or with remove=true, take off) a tag on several monitors at once,
   // optionally including everything downstream of them.
@@ -645,9 +697,10 @@ export function createApi({ store, engine, icons }) {
   // each, and which reading it answered. state: 'open' | 'ok' | 'unknown'
   // (answers none of the readings) | 'waiting' (not checked since) |
   // 'notSnmp' (tagged, but there is nothing to read).
-  route('GET', '/api/monitors/:id/problems', ({ params }) => {
+  route('GET', '/api/monitors/:id/problems', ({ params, view }) => {
+    const v = view();
     const m = engine.monitors.get(Number(params.id));
-    if (!m) throw new HttpError(404, 'Monitor not found');
+    if (!m || (v && !v.visible.has(m.id))) throw new HttpError(404, 'Monitor not found');
     const tags = store.listTags();
     const mine = store.monitorTagMap().get(m.id) ?? [];
     const state = new Map(engine.problemState().filter((x) => x.monitorId === m.id).map((x) => [x.problemId, x]));
@@ -663,7 +716,7 @@ export function createApi({ store, engine, icons }) {
           reading: x?.reading ?? null,
         };
       });
-  });
+  }, 'view');
 
   route('POST', '/api/problems', ({ body }) => {
     const p = { kind: 'value', ...normalizeValueProblem(body, undefined, store.listTags()) };
@@ -713,7 +766,12 @@ export function createApi({ store, engine, icons }) {
 
   // ---- alert log & settings -------------------------------------------------
 
-  route('GET', '/api/alerts', ({ query }) => store.listAlerts(int(query.limit, 100, 1, 1000)));
+  route('GET', '/api/alerts', ({ query, view }) => {
+    const limit = int(query.limit, 100, 1, 1000);
+    const v = view();
+    if (!v) return store.listAlerts(limit);
+    return store.listAlerts(limit * 10).filter((a) => v.visible.has(a.monitorId)).slice(0, limit).map((a) => redactAlert(a, v.visible));
+  }, 'view');
 
   route('GET', '/api/settings', () => store.getSettings());
   route('PUT', '/api/settings', ({ body }) => {
@@ -728,17 +786,348 @@ export function createApi({ store, engine, icons }) {
     if (!res.found) throw new HttpError(404, 'Unknown push token');
     return res;
   };
-  route('GET', '/api/push/:token', push);
-  route('POST', '/api/push/:token', push);
+  route('GET', '/api/push/:token', push, 'public');
+  route('POST', '/api/push/:token', push, 'public');
+
+  // ---- accounts ------------------------------------------------------------
+
+  const ssoConfig = () => oidc.config();
+  // Password sign-in can be kept for admins only once SSO works, as a way in
+  // if the provider is down.
+  const passwordsFor = (role) => !oidc.enabled() || ssoConfig().passwordLogin || role === 'admin';
+
+  const activeAdmins = (except) => store.listUsers().filter((u) => u.role === 'admin' && u.active && u.id !== except).length;
+  // Standalone, someone must be able to get into Settings. Under Home
+  // Assistant its admins always can, through the sidebar.
+  const keepAnAdmin = (id) => {
+    if (!auth.addon && !auth.off && !activeAdmins(id)) throw new HttpError(400, 'There must be at least one admin who can sign in');
+  };
+
+  const meOf = (who) => ({
+    id: who.user.id,
+    username: who.user.username,
+    name: who.user.name ?? '',
+    email: who.user.email ?? '',
+    role: who.user.role,
+    via: who.via,
+    password: Boolean(who.user.passwordHash),
+    sso: Boolean(who.user.oidcSub),
+  });
+
+  const normalizeScope = (v, base = {}) => {
+    const src = { ...base, ...(v ?? {}) };
+    let tagExpr = String(src.tagExpr ?? '').trim();
+    if (tagExpr) {
+      const expr = parseTagExpr(tagExpr, store.listTags());
+      if (expr?.error) throw new HttpError(400, expr.error);
+      tagExpr += ')'.repeat(expr?.unclosed ?? 0);
+    }
+    return {
+      all: Boolean(src.all),
+      tagIds: tagExpr ? [] : (idList(src.tagIds) ?? []),
+      tagMatch: src.tagMatch === 'all' ? 'all' : 'any',
+      tagExpr,
+    };
+  };
+
+  const USERNAME = /^[\p{L}\p{N}._@+-]{1,64}$/u;
+  const EMAIL = /^[^\s@]+@[^\s@]+$/;
+
+  const checkPassword = (pw) => {
+    if (typeof pw !== 'string' || pw.length < PASSWORD_MIN) throw new HttpError(400, `The password needs at least ${PASSWORD_MIN} characters`);
+    if (pw.length > 1024) throw new HttpError(400, 'That password is too long');
+  };
+
+  const normalizeUser = (body, base = {}) => {
+    const username = String(body.username ?? base.username ?? '').trim();
+    if (!USERNAME.test(username)) throw new HttpError(400, 'A username is 1–64 letters, digits and . _ @ + -');
+    const clash = store.findUser(username);
+    if (clash && clash.id !== base.id) throw new HttpError(400, `There is already a user called "${clash.username}"`);
+    const email = String(body.email ?? base.email ?? '').trim().slice(0, 200);
+    if (email && !EMAIL.test(email)) throw new HttpError(400, 'That email address doesn\'t look right');
+    return {
+      username,
+      name: String(body.name ?? base.name ?? '').trim().slice(0, 100),
+      email,
+      role: (body.role ?? base.role) === 'admin' ? 'admin' : 'viewer',
+      active: (body.active ?? base.active) !== false,
+      scope: normalizeScope(body.scope, base.scope),
+    };
+  };
+
+  const userOr404 = (id) => store.getUser(Number(id)) ?? (() => { throw new HttpError(404, 'User not found'); })();
+
+  // An SSO sign-in's account: the one linked to this subject, else the one
+  // with its (verified) email address, linked from now on, else a new viewer
+  // if accounts are created on first sign-in.
+  const ssoUser = (claims, issuer) => {
+    const c = ssoConfig();
+    const sub = `${issuer} ${claims.sub}`;
+    const email = typeof claims.email === 'string' ? claims.email.trim().slice(0, 200) : '';
+    let u = store.findUserBySub(sub);
+    if (!u && email && claims.email_verified !== false) {
+      const hits = store.findUsersByEmail(email).filter((x) => !x.oidcSub);
+      if (hits.length === 1) {
+        u = hits[0];
+        store.updateUser(u.id, { oidcSub: sub });
+      }
+    }
+    if (!u) {
+      if (!c.autoCreate) throw new Error(`There's no Upstream Kuma account for ${email || claims.preferred_username || 'you'} yet. Ask an admin to add one${email ? ' with this email address' : ''}.`);
+      const want = String(claims.preferred_username || email.split('@')[0] || 'user').replace(/[^\p{L}\p{N}._@+-]/gu, '').slice(0, 60) || 'user';
+      let username = want;
+      for (let i = 2; store.findUser(username); i++) username = `${want}-${i}`;
+      const id = store.createUser({ username, name: String(claims.name ?? '').slice(0, 100), email: EMAIL.test(email) ? email : '', role: 'viewer', oidcSub: sub, scope: {} });
+      u = store.getUser(id);
+    }
+    if (!u.active) throw new Error('Your Upstream Kuma account is turned off.');
+    const patch = {};
+    if (c.adminGroup) {
+      const role = groupsOf(claims, c.groupsClaim).includes(c.adminGroup) ? 'admin' : 'viewer';
+      if (role !== u.role && (role === 'admin' || auth.addon || activeAdmins(u.id))) patch.role = role;
+    }
+    if (!u.name && claims.name) patch.name = String(claims.name).slice(0, 100);
+    if (!u.email && EMAIL.test(email)) patch.email = email;
+    if (Object.keys(patch).length) {
+      store.updateUser(u.id, patch);
+      engine.touch();
+      u = store.getUser(u.id);
+    }
+    return u;
+  };
+
+  // Where to go after signing in: a hash route of this app, nothing else.
+  const safeNext = (v) => (typeof v === 'string' && /^#\/[\w\-./?=&%~]*$/.test(v) ? v : '');
+  const toLogin = (message) => `../../../login.html?error=${encodeURIComponent(message)}`;
+
+  route('GET', '/api/auth/status', ({ who }) => {
+    const c = ssoConfig();
+    return {
+      setup: auth.setupOpen(),
+      signedIn: Boolean(who),
+      addon: auth.addon,
+      sso: oidc.enabled() ? { label: c.label || OIDC_DEFAULTS.label } : null,
+      password: !oidc.enabled() || c.passwordLogin,
+    };
+  }, 'public');
+
+  route('POST', '/api/auth/login', async ({ req, body }) => {
+    const user = await auth.login(req, body.username, body.password);
+    if (!passwordsFor(user.role)) throw new HttpError(403, `Sign in with ${ssoConfig().label || 'single sign-on'} instead`);
+    return json({ ok: true }, { 'Set-Cookie': auth.startSession(user, req) });
+  }, 'public');
+
+  // The first account, from the sign-in page of a new install.
+  route('POST', '/api/auth/setup', async ({ req, body }) => {
+    if (!auth.setupOpen()) throw new HttpError(403, 'Upstream Kuma already has accounts. Sign in instead.');
+    const data = normalizeUser({ ...body, role: 'admin', scope: {} });
+    checkPassword(body.password);
+    const passwordHash = await hashPassword(body.password);
+    const id = store.tx(() => {
+      if (store.countUsers()) throw new HttpError(403, 'Upstream Kuma already has accounts. Sign in instead.');
+      return store.createUser({ ...data, passwordHash });
+    });
+    return json({ ok: true }, { 'Set-Cookie': auth.startSession(store.getUser(id), req) });
+  }, 'public');
+
+  route('POST', '/api/auth/logout', ({ req, who }) => {
+    if (who?.tokenHash) store.deleteSession(who.tokenHash);
+    return json({ ok: true }, { 'Set-Cookie': clearCookie(SESSION_COOKIE, req) });
+  }, 'public');
+
+  route('GET', '/api/auth/oidc/start', async ({ req, query }) => {
+    try {
+      const { url, state } = await oidc.start(req, safeNext(query.next));
+      return redirect(url, { 'Set-Cookie': cookie(STATE_COOKIE, state, { req, maxAge: 600000 }) });
+    } catch (err) {
+      return redirect(toLogin(err.message));
+    }
+  }, 'public');
+
+  route('GET', '/api/auth/oidc/callback', async ({ req, query }) => {
+    const clear = clearCookie(STATE_COOKIE, req);
+    try {
+      const { claims, issuer, next } = await oidc.finish({
+        code: query.code,
+        state: query.state,
+        cookieState: parseCookies(req.headers?.cookie)[STATE_COOKIE],
+        error: query.error,
+        errorDescription: query.error_description,
+      });
+      const user = ssoUser(claims, issuer);
+      return redirect(`../../../${next}`, { 'Set-Cookie': [auth.startSession(user, req), clear] });
+    } catch (err) {
+      return redirect(toLogin(err.message), { 'Set-Cookie': clear });
+    }
+  }, 'public');
+
+  route('GET', '/api/me', ({ who }) => meOf(who), 'view');
+
+  route('PUT', '/api/me/password', async ({ who, body }) => {
+    if (who.via !== 'session' || !who.user.passwordHash) throw new HttpError(400, 'This account has no password to change');
+    if (!(await verifyPassword(String(body.current ?? ''), who.user.passwordHash))) throw new HttpError(400, 'The current password is wrong');
+    checkPassword(body.password);
+    store.updateUser(who.user.id, { passwordHash: await hashPassword(body.password) });
+    store.deleteUserSessions(who.user.id, who.tokenHash);
+    return { ok: true };
+  }, 'view');
+
+  route('GET', '/api/users', () => store.listUsers().map(publicUser));
+
+  route('POST', '/api/users', async ({ body }) => {
+    const data = normalizeUser(body);
+    let passwordHash = null;
+    if (body.password) {
+      checkPassword(body.password);
+      passwordHash = await hashPassword(body.password);
+    } else if (!oidc.enabled()) {
+      throw new HttpError(400, 'Give the account a password (single sign-on isn\'t set up)');
+    } else if (!data.email) {
+      throw new HttpError(400, 'An account without a password needs the email address it signs in with');
+    }
+    const id = store.createUser({ ...data, passwordHash });
+    engine.touch();
+    return publicUser(store.getUser(id));
+  });
+
+  // `password` sets a new one, `removePassword` leaves SSO only, `unlinkSso`
+  // forgets the linked SSO identity (the next SSO sign-in links by email).
+  route('PUT', '/api/users/:id', async ({ params, body, who }) => {
+    const existing = userOr404(params.id);
+    const data = normalizeUser(body, existing);
+    if (existing.role === 'admin' && existing.active && (data.role !== 'admin' || !data.active)) keepAnAdmin(existing.id);
+    const patch = { ...data };
+    if (body.password) {
+      checkPassword(body.password);
+      patch.passwordHash = await hashPassword(body.password);
+    } else if (body.removePassword) {
+      if (!existing.oidcSub && !(oidc.enabled() && data.email)) throw new HttpError(400, 'Without a password this account could not sign in');
+      patch.passwordHash = null;
+    }
+    if (body.unlinkSso) patch.oidcSub = null;
+    store.updateUser(existing.id, patch);
+    // Signed-in sessions end when what they were allowed to do changes.
+    if (patch.passwordHash !== undefined || data.role !== existing.role || !data.active) {
+      store.deleteUserSessions(existing.id, existing.id === who.user.id ? who.tokenHash : null);
+    }
+    engine.touch();
+    return publicUser(store.getUser(existing.id));
+  });
+
+  route('DELETE', '/api/users/:id', ({ params, who }) => {
+    const existing = userOr404(params.id);
+    if (existing.id === who.user.id) throw new HttpError(400, 'You can\'t delete your own account');
+    if (existing.role === 'admin' && existing.active) keepAnAdmin(existing.id);
+    store.deleteUser(existing.id);
+    engine.touch();
+    return { ok: true };
+  });
+
+  const ssoView = (req) => {
+    const { clientSecret, ...c } = ssoConfig();
+    return { ...c, addon: auth.addon, hasSecret: Boolean(clientSecret), redirectUri: c.publicUrl || !auth.addon ? oidc.redirectUri(req) : null, callbackPath: CALLBACK_PATH };
+  };
+
+  route('GET', '/api/sso', ({ req }) => ssoView(req));
+
+  // A secret left blank keeps the saved one (the form never sees it);
+  // `clearSecret` removes it. Turning SSO on fetches the provider's
+  // configuration first, so a typo shows up here, not at sign-in.
+  route('PUT', '/api/sso', async ({ req, body }) => {
+    const old = ssoConfig();
+    const str = (k, max = 500) => String(body[k] ?? old[k] ?? '').trim().slice(0, max);
+    const next = {
+      enabled: Boolean(body.enabled ?? old.enabled),
+      issuer: str('issuer').replace(/\/+$/, ''),
+      clientId: str('clientId'),
+      clientSecret: body.clearSecret ? '' : (body.clientSecret ? String(body.clientSecret).trim().slice(0, 2000) : old.clientSecret),
+      label: str('label', 60) || OIDC_DEFAULTS.label,
+      scopes: str('scopes') || OIDC_DEFAULTS.scopes,
+      publicUrl: str('publicUrl').replace(/\/+$/, ''),
+      autoCreate: Boolean(body.autoCreate ?? old.autoCreate),
+      adminGroup: str('adminGroup', 200),
+      groupsClaim: str('groupsClaim', 100) || 'groups',
+      passwordLogin: (body.passwordLogin ?? old.passwordLogin) !== false,
+    };
+    for (const k of ['issuer', 'publicUrl']) {
+      if (next[k] && !/^https?:\/\/[^\s/]+/.test(next[k])) throw new HttpError(400, `${k === 'issuer' ? 'The issuer' : 'The public URL'} must start with https:// (or http://)`);
+    }
+    if (next.enabled) {
+      if (!next.issuer || !next.clientId) throw new HttpError(400, 'Single sign-on needs an issuer URL and a client ID');
+      if (auth.addon && !next.publicUrl) throw new HttpError(400, 'Under Home Assistant, give the address people open Upstream Kuma at (the public URL), so the provider can send them back to it');
+      try {
+        const meta = await oidc.discover(next.issuer, { fresh: true });
+        if (meta.doc.issuer.replace(/\/+$/, '') !== next.issuer) throw new Error(`The provider calls itself "${meta.doc.issuer}"; use that as the issuer`);
+      } catch (err) {
+        throw new HttpError(400, err.message);
+      }
+    }
+    store.setSetting('oidc', next);
+    return ssoView(req);
+  });
 
   return async function handle(req, url, body) {
     for (const r of routes) {
       if (r.method !== req.method) continue;
       const match = r.re.exec(url.pathname);
       if (!match) continue;
+      const who = auth.identify(req);
+      if (r.access !== 'public') {
+        if (!who) throw new HttpError(401, auth.setupOpen() ? 'Create the admin account first' : 'Sign in first');
+        if (r.access === 'admin' && who.user.role !== 'admin') throw new HttpError(403, 'Only an admin can do that');
+      }
+      let view;
       const params = Object.fromEntries(r.keys.map((k, i) => [k, decodeURIComponent(match[i + 1])]));
-      return r.handler({ params, query: Object.fromEntries(url.searchParams), body: body ?? {} });
+      return r.handler({
+        params,
+        query: Object.fromEntries(url.searchParams),
+        body: body ?? {},
+        req,
+        who,
+        view: () => {
+          if (!who) throw new HttpError(401, 'Sign in first');
+          if (view === undefined) view = viewFor(who.user);
+          return view;
+        },
+      });
     }
     throw new HttpError(404, 'Not found');
+  };
+}
+
+// An alert as a viewer sees it: the lists of downstream monitors keep only
+// the ones it may see (with the count to match), and channel names are left
+// out (they are settings).
+export function redactAlert(a, visible) {
+  const keep = new Map();
+  for (const x of a.affected) {
+    if (!visible.has(x.id)) continue;
+    const line = `${'-'.repeat(x.depth)} ${x.name}`;
+    keep.set(line, (keep.get(line) ?? 0) + 1);
+  }
+  const out = [];
+  const lines = String(a.message ?? '').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const head = /^(.*) \((\d+)\):$/.exec(lines[i]);
+    if (!head) {
+      out.push(lines[i]);
+      continue;
+    }
+    const list = [];
+    while (i + 1 < lines.length && /^-+ /.test(lines[i + 1])) {
+      const line = lines[++i];
+      if (keep.get(line)) {
+        keep.set(line, keep.get(line) - 1);
+        list.push(line);
+      }
+    }
+    if (list.length) out.push(`${head[1]} (${list.length}):`, ...list);
+    else if (out.at(-1) === '') out.pop();
+  }
+  return {
+    ...a,
+    message: out.join('\n'),
+    affected: a.affected.filter((x) => visible.has(x.id)),
+    delivered: a.delivered.map((d) => ({ ok: d.ok, name: d.ok ? 'Sent' : 'Not delivered' })),
   };
 }

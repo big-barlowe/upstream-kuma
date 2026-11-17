@@ -3,7 +3,7 @@
 You don't need Home Assistant to use Upstream Kuma. It is published as a Docker image, `ghcr.io/big-barlowe/upstream-kuma`, and outside Home Assistant it runs as a standalone web app. Everything works the same, except:
 
 - **Home Assistant entity monitors** and the **Home Assistant notification channel** need a connection to a Home Assistant instance. See [Connecting to Home Assistant](#connecting-to-home-assistant-optional). All other monitor types (HTTP(S), TCP, ping, DNS, Minecraft, push, group) and notification channels (ntfy, Discord, Slack, Telegram, Pushover, Gotify, webhook, email) work on their own.
-- **There is no login.** Inside Home Assistant, HA handles sign-in. On its own, anyone who can reach the port can use the UI. Keep it on a trusted network, or put it behind a reverse proxy that adds a login. See [Security](#security).
+- **You sign in with an account.** Inside Home Assistant, HA handles sign-in. On its own, the first visit creates the admin account, and you add others (or single sign-on) in Settings → Users. See [Security](#security).
 
 Contents:
 
@@ -119,6 +119,7 @@ Everything about monitors, notifications, tags and retention is set in the web U
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warning` or `error`. |
 | `PORT` | `8099` | Port inside the container. To use a different port on the host, change the left side of `ports` instead (e.g. `"8080:8099"`). |
 | `DATA_DIR` | `/data` | Where the database lives inside the container. Change the volume, not this. |
+| `AUTH` | | `off` turns accounts off: no sign-in, everyone is an admin. Only for a proxy that signs people in itself (see [Security](#security)). |
 | `HA_URL` | | Optional. See [Connecting to Home Assistant](#connecting-to-home-assistant-optional). |
 | `HA_TOKEN` | | Optional. |
 
@@ -155,13 +156,21 @@ If you build it yourself, run `git pull` (for a clone), then `docker compose bui
 
 ## Security
 
-Upstream Kuma has **no user accounts or login** of its own. Anyone who can open the port can view and change everything, including notification settings such as bot tokens and SMTP passwords. So:
+Upstream Kuma asks everyone to **sign in**. The first time you open it, it asks you to create the admin account; until you do, whoever opens it first can, so do it straight away. Add accounts for other people under **Settings → Users**: admins can do everything, viewers see only the monitors their tags pick (and what is upstream of those) and change nothing. You can also sign in with an OpenID Connect provider (Authentik, Authelia, Keycloak, …); see *Users and sign-in* in [DOCS.md](../upstream_kuma/DOCS.md#users-and-sign-in).
 
-- **On a home network:** fine as it is, if you trust the devices on it.
-- **Reachable from the internet:** don't publish port 8099 directly. Put a reverse proxy in front that adds authentication: basic auth, or a single sign-on service such as Authelia, Authentik or Cloudflare Access.
-- **Push monitors** are the exception. Services call `/api/push/<token>` without a login, and the token in the URL acts as the password. If those services are outside your network, let `/api/push/` through the proxy without authentication.
+- **Reachable from the internet:** use HTTPS (a reverse proxy such as Caddy below), so passwords and the session cookie aren't sent in the clear. The proxy should pass `X-Forwarded-Proto`, which makes the cookie HTTPS-only.
+- **Push monitors** need no sign-in. Services call `/api/push/<token>`, and the token in the URL acts as the password.
+- **Your own sign-in in front** (basic auth, Authelia, Cloudflare Access): set `AUTH=off` to turn Upstream Kuma's accounts off, so people don't sign in twice. Then anyone who gets past the proxy is an admin, so let only `/api/push/` through it without authentication.
 
-Example with [Caddy](https://caddyserver.com/), which also handles HTTPS. Create the password hash with `caddy hash-password`:
+Example with [Caddy](https://caddyserver.com/), which also handles HTTPS:
+
+```caddyfile
+kuma.example.com {
+	reverse_proxy upstream-kuma:8099
+}
+```
+
+Or with Caddy's own login in front (and `AUTH=off`). Create the password hash with `caddy hash-password`:
 
 ```caddyfile
 kuma.example.com {

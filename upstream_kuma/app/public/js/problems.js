@@ -223,8 +223,8 @@ function whereText(w, nameOf) {
 
 // Tag pills with any/all, or an expression (Advanced). `value` is
 // { tagIds, tagMatch, tagExpr }; onChange gets a new one. `count(test)`
-// describes how many monitors match.
-function tagScope(box, { value, tags, onChange, count, none = 'No tags picked: every monitor.', id }) {
+// describes how many monitors match. Also the scope of a viewer (users.js).
+export function tagScope(box, { value, tags, onChange, count, none = 'No tags picked: every monitor.', id }) {
   const paint = (exprMode) => {
     if (exprMode) {
       const pillsText = tags().filter((t) => value.tagIds.includes(t.id)).map((t) => exprName(t.name)).join(value.tagMatch === 'all' ? ' & ' : ' | ');
@@ -714,7 +714,7 @@ export function monitoredData(list, m) {
   return h('section', { class: 'card mon-data' },
     h('div', { class: 'card-head' },
       h('h2', null, 'Monitored data'),
-      h('a', { class: 'muted small', href: '#/settings/notifications' }, 'Problem definitions')),
+      h('a', { class: 'muted small admin-only', href: '#/settings/notifications' }, 'Problem definitions')),
     h('p', { class: 'muted small' }, 'What problem definitions read from this monitor on every check (they pick it by its tags).'),
     h('div', { class: 'open-wrap' }, h('table', { class: 'open-table' },
       h('thead', null, h('tr', null, ['Problem definition', 'Data', 'Value now', 'Problem when it', 'State'].map((t) => h('th', null, t)))),

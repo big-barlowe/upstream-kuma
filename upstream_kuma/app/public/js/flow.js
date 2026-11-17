@@ -558,6 +558,19 @@ export function sourceMark() {
     svg('path', { class: 'hole-core', d: HOLE.core }));
 }
 
+// The same in two layers, for streams to run between (the sign-in page):
+// the rim under them, the water and core over them, in node.svg's units
+// around `centre`, `box` wide.
+export function sourceLayers() {
+  const f = holeWarble();
+  return {
+    centre: HOLE.c,
+    box: 172,
+    rim: [svg('path', { class: 'hole-rim', d: HOLE.rim }, warble(f.rim, '7s'))],
+    over: [svg('path', { class: 'hole-water', d: HOLE.water }, warble(f.water, '5s')), svg('path', { class: 'hole-core', d: HOLE.core })],
+  };
+}
+
 function sourceHole(x, y, focused) {
   const [cx, cy] = HOLE.c;
   const s = HOLE.scale;

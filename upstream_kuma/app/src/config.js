@@ -18,6 +18,9 @@ export const config = {
   logLevel: options.log_level || process.env.LOG_LEVEL || 'info',
   allowDirectAccess: options.allow_direct_access ?? process.env.ALLOW_DIRECT_ACCESS !== 'false',
   supervisorToken: process.env.SUPERVISOR_TOKEN || null,
+  // AUTH=off: no accounts (everyone is an admin), for a proxy that signs
+  // people in itself. Not available under Home Assistant.
+  auth: !process.env.SUPERVISOR_TOKEN && /^(off|none|false)$/i.test(process.env.AUTH ?? '') ? 'off' : 'accounts',
   // HA API: via the Supervisor proxy when running as an add-on, or a
   // user-supplied URL + long-lived token for standalone dev.
   haUrl: process.env.SUPERVISOR_TOKEN ? 'http://supervisor/core' : (process.env.HA_URL || null),

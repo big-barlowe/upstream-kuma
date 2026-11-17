@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Store } from '../src/db.js';
 import { Engine } from '../src/engine.js';
+import { Auth } from '../src/auth.js';
 import { createApi } from '../src/api.js';
 import { parseCsv, toCsv } from '../src/csv.js';
 import { exportCsv, importCsv, CSV_EXAMPLE, csvTemplate } from '../src/transfer.js';
@@ -177,7 +178,7 @@ test('the import route saves uploads and starts the new monitors', async () => {
   engine.reload();
   const saved = [];
   const icons = { describe: () => null, sync: () => {}, hasUpload: () => false, saveUpload: (id, img) => saved.push(id) };
-  const handle = createApi({ store, engine, icons });
+  const handle = createApi({ store, engine, icons, auth: new Auth({ store, mode: 'off' }) });
   const csv = toCsv([['name', 'type', 'host', 'icon'], ['A', 'ping', 'a', `data:image/png;base64,${PNG.toString('base64')}`]]);
   const call = (body) => handle({ method: 'POST' }, new URL('http://x/api/csv/import'), body);
 

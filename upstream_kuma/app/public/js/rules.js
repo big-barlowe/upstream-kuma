@@ -36,6 +36,17 @@ export function ruleTagTest(rule, tags) {
     : { test: (ids) => live.some((t) => ids.includes(t)) };
 }
 
+// A viewer's scope ({ all, tagIds, tagMatch, tagExpr }) as a test of a
+// monitor's tag ids. Unlike a rule's, an empty scope matches nothing (`all`
+// is the explicit "every monitor"), and deleted tags or a broken expression
+// match nothing rather than widening. The server (auth.js) uses it too.
+export function scopeTest(scope, tags) {
+  if (scope?.all) return () => true;
+  if (!scope || (!scope.tagExpr && !scope.tagIds?.length)) return () => false;
+  const t = ruleTagTest({ tagIds: scope.tagIds ?? [], tagMatch: scope.tagMatch, tagExpr: scope.tagExpr ?? '' }, tags);
+  return t.error || t.all ? () => false : t.test;
+}
+
 export const ruleHasProblem = (rule, problemId, severity) => (rule.problemIds.length
   ? rule.problemIds.includes(problemId)
   : !rule.minSeverity || (SEVERITIES[severity]?.rank ?? 0) >= (SEVERITIES[rule.minSeverity]?.rank ?? 0));

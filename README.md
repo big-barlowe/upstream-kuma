@@ -46,6 +46,7 @@ Other affected monitors (3):
 - **Water-themed UI.** A live "falls" diagram where healthy streams flow with a blue glow, streams below a failure run dry, and blocked branches go still. Drag to move around it and zoom like a map, or pop it out to fill the window. Click a monitor to trace just its upstream and downstream, and expand it for a details panel.
 - **Icons.** HTTP monitors show their site's favicon automatically. You can also choose a built-in icon, an emoji, an image URL or upload your own.
 - **CSV import & export.** Move all your monitors to another install, or edit many at once in a spreadsheet. An export imports as it is. See the [CSV guide](docs/csv.md).
+- **Users and single sign-on.** Admins, and viewers who see only the monitors their tags pick (plus everything upstream of them) and change nothing. Sign in with a password or an OpenID Connect provider (Authentik, Authelia, Keycloak, Google, Entra…), optionally creating accounts and granting admin from a group.
 - **Tags.** Coloured tags on each monitor, a tag filter for the list and the falls (matching any or all of the chosen tags, or an expression like `Switch & (Home | Cabin)`), default icons per tag, and bulk tagging: shift-click monitors or shift-drag a box over them, then add or remove tags, optionally including everything downstream.
 
 ## Install
@@ -80,14 +81,14 @@ docker run -d --name upstream-kuma --restart unless-stopped \
 
 Then open `http://<your-server>:8099`. Data is stored in `./data` (or the folder you mounted at `/data`). Every monitor type and notification channel works, except the two that talk to Home Assistant, which need a URL and access token if you want them.
 
-> **There is no login.** Under Home Assistant, HA handles sign-in. Run on its own, anyone who can reach the port can use the app. Keep it on a trusted network, or put it behind a reverse proxy that adds authentication.
+> **Sign in first.** Under Home Assistant, HA handles sign-in. Run on its own, the first visit asks you to create the admin account, so do that straight away.
 
 The **[Docker guide](docs/docker.md)** covers:
 - image tags and pinning a version
 - building from source
 - configuration (time zone, connecting to Home Assistant)
 - backups and updates
-- a reverse proxy with a login
+- accounts, HTTPS with a reverse proxy, or your proxy's own sign-in
 - networking (monitoring the Docker host itself, ping capabilities)
 - moving between the add-on and Docker
 

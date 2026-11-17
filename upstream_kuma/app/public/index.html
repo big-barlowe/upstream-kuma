@@ -93,8 +93,8 @@
           </svg>
         </button>
         <input id="search" type="search" placeholder="Search" aria-label="Search monitors">
-        <a class="btn primary small" href="#/add" title="Add monitor">+ Add</a>
-        <button id="edit-toggle" class="btn small" aria-pressed="false">Edit</button>
+        <a class="btn primary small admin-only" href="#/add" title="Add monitor">+ Add</a>
+        <button id="edit-toggle" class="btn small admin-only" aria-pressed="false">Edit</button>
         <button id="side-pop" class="btn small pop-btn" aria-pressed="false"></button>
       </div>
       <p id="edit-hint" class="edit-hint" hidden>
@@ -123,7 +123,7 @@
     </div>
     <a id="tab-falls" class="tab tab-falls" href="#/" data-route="dashboard" aria-label="The Falls"></a>
     <div class="tab-group">
-    <a id="tab-add" class="tab" href="#/add" data-route="add">
+    <a id="tab-add" class="tab admin-only" href="#/add" data-route="add">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v8M8 12h8"/></svg>
       <span>Add</span>
     </a>

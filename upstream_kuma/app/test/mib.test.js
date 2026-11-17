@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseMib, splitModules, buildLibrary, MibLibrary, bundledModules, formatValue, octetHint, mibLibrary } from '../src/mib.js';
 import { snmpBrowse, checkSnmp, cardText } from '../src/checkers/snmp.js';
+import { Auth } from '../src/auth.js';
 import { createApi } from '../src/api.js';
 import { Store } from '../src/db.js';
 import { Engine } from '../src/engine.js';
@@ -157,7 +158,7 @@ test('uploading MIBs names the values in All data and on the card', async () => 
   const store = new Store(':memory:');
   const engine = new Engine({ store, checkers: {}, notify: async () => [], schedule: () => null, cancel: () => {} });
   const icons = { describe: () => null, sync: () => {}, hasUpload: () => false, saveUpload: () => {} };
-  const handle = createApi({ store, engine, icons });
+  const handle = createApi({ store, engine, icons, auth: new Auth({ store, mode: 'off' }) });
   const call = (method, path, body) => handle({ method }, new URL(`http://x${path}`), body);
   const values = [...mib(), { oid: '1.3.6.1.4.1.99.2.1.0', type: 'integer', value: 415 }].sort((a, b) => compareOids(a.oid, b.oid));
   const a = await agent({ values });
@@ -190,7 +191,7 @@ test('uploading MIBs names the values in All data and on the card', async () => 
     assert.equal(cardText((await checkSnmp(m)).data, m.config), 'Temp 41.5 degrees C');
 
     // stored: a fresh API over the same store has them
-    createApi({ store, engine, icons });
+    createApi({ store, engine, icons, auth: new Auth({ store, mode: 'off' }) });
     assert.equal(mibLibrary().label('1.3.6.1.4.1.99.2.1.0').name, 'acmeTemp.0');
 
     await call('DELETE', '/api/mibs/ACME-SMI');
@@ -200,7 +201,7 @@ test('uploading MIBs names the values in All data and on the card', async () => 
     a.close();
     store.close();
     // leave the bundled-only library for other tests
-    createApi({ store: new Store(':memory:'), engine, icons });
+    createApi({ store: new Store(':memory:'), engine, icons, auth: new Auth({ store, mode: 'off' }) });
   }
 });
 

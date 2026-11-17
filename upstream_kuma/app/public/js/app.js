@@ -1,4 +1,4 @@
-import { api, h, svg, toast, modal, confirmDialog, storage, store, STATUS_LABEL, BEAT_STATUS, TYPE_LABEL, fmtTime, fmtAgo, fmtPct, fmtMs, fill } from './util.js';
+import { api, h, svg, toast, modal, confirmDialog, storage, store, STATUS_LABEL, BEAT_STATUS, TYPE_LABEL, fmtTime, fmtAgo, fmtPct, fmtMs, fill, session } from './util.js';
 import { FlowView, lineage, SOURCE, sourceMark } from './flow.js';
 import { iconEl } from './icons.js';
 import { heartbeatBar, responseChart } from './chart.js';
@@ -8,6 +8,7 @@ import { tagPill, colorPicker, newTagDialog, matchIcon, matchToggle, tagExprEdit
 import { parseTagExpr, exprName } from './filter.js';
 import { snmpSnapshot, snmpSummary, snmpSections, renderSnmpBrowser, mibLibraryCard } from './snmp.js';
 import { monitorSeverity, unresolvedTable, sevBadge, SEVERITIES, monitoredData } from './problems.js';
+import { renderUsers, renderAccount } from './users.js';
 
 const POLL_MS = 3000;
 const $ = (sel) => document.querySelector(sel);
@@ -116,14 +117,16 @@ function selectionChanged() {
   if (ui.route?.name === 'dashboard') renderDashboard(true);
 }
 
+// Selecting is for tagging and moving, so viewers don't.
 function setSelection(ids) {
-  ui.selected = new Set(ids);
+  ui.selected = new Set(session.admin ? ids : []);
   selectionChanged();
 }
 
 // `from` is the parent of the list row it was picked under (undefined from
 // the Falls, where a monitor isn't under one particular parent).
 function toggleSelected(id, from) {
+  if (!session.admin) return;
   if (ui.selected.has(id)) ui.selected.delete(id);
   else {
     ui.selected.add(id);
@@ -365,8 +368,8 @@ function drawTree(vis) {
 
   if (!state.monitors.length) {
     fill(host, h('div', { class: 'tree-empty' },
-      h('p', null, 'Nothing is flowing yet.'),
-      h('a', { class: 'btn primary', href: '#/add' }, '+ Add your first monitor')));
+      h('p', null, session.admin ? 'Nothing is flowing yet.' : 'No monitors to show you yet. An admin picks what your account sees.'),
+      session.admin ? h('a', { class: 'btn primary', href: '#/add' }, '+ Add your first monitor') : null));
     return;
   }
 
@@ -437,7 +440,7 @@ function tagFilterControls(box, where) {
         h('button', { type: 'button', class: 'expr-text', title: 'Edit the filter', onclick: () => openExprEditor(where) }, ui.tagExpr),
         h('button', { type: 'button', class: 'chip-x', 'aria-label': 'Clear the filter', title: 'Clear the filter', onclick: () => setTagExpr('') }, '×')),
       expr?.error ? h('span', { class: 'expr-error' }, expr.error) : null,
-      h('a', { class: 'linkish', href: '#/settings/tags' }, 'Manage'));
+      h('a', { class: 'linkish admin-only', href: '#/settings/tags' }, 'Manage'));
   }
   const on = ui.tagFilter.size > 0;
   fill(box,
@@ -459,7 +462,7 @@ function tagFilterControls(box, where) {
     on && state.tags.length > 1 ? matchToggle(ui.tagMatch, (mode) => setTagFilter(ui.tagFilter, mode)) : null,
     on ? h('button', { class: 'linkish', onclick: () => setTagFilter([]) }, 'Clear') : null,
     h('button', { class: 'linkish', title: 'Combine tags with and, or and not', onclick: () => openExprEditor(where) }, 'Advanced'),
-    h('a', { class: 'linkish', href: '#/settings/tags' }, 'Manage'));
+    h('a', { class: 'linkish admin-only', href: '#/settings/tags' }, 'Manage'));
 }
 
 // Opens the editor in the sidebar or in the Falls' filter panel. Only one is
@@ -1004,7 +1007,7 @@ async function renderDashboard(isUpdate = false) {
             }),
             h('button', {
               id: 'select-toggle',
-              class: 'btn small',
+              class: 'btn small admin-only',
               title: 'Select monitors to tag or move them. Shortcut: shift-click, or hold shift and drag a box.',
               onclick: () => {
                 ui.selectMode = !ui.selectMode;
@@ -1051,6 +1054,8 @@ async function renderDashboard(isUpdate = false) {
   fill($('#flow-empty'), state.loaded && state.monitors.length && !shown.length
     ? h('div', { class: 'empty' }, h('p', null, 'No monitors have the tags you are filtering by.'),
       h('button', { class: 'btn', onclick: () => setTagFilter([]) }, 'Clear the filter'))
+    : state.loaded && !state.monitors.length && !session.admin
+    ? h('div', { class: 'empty' }, h('p', null, 'No monitors to show you yet. An admin picks what your account sees.'))
     : state.loaded && !state.monitors.length
     ? h('div', { class: 'empty' },
       h('p', null, 'Start at the top: add the thing everything else depends on (your WAN, a router), then add monitors beneath it.'),
@@ -1256,8 +1261,8 @@ function renderInfo() {
     m.msg ? h('p', { class: 'info-msg' }, m.msg) : null,
     // Near the top: the upstream and downstream lists below can get long.
     h('div', { class: 'info-actions' },
-      m.type !== 'group' ? h('button', { class: 'btn small', onclick: () => action(`monitors/${m.id}/check`, 'Checked') }, 'Check now') : null,
-      h('a', { class: 'btn small', href: `#/monitor/${m.id}/edit` }, 'Edit'),
+      m.type !== 'group' && session.admin ? h('button', { class: 'btn small', onclick: () => action(`monitors/${m.id}/check`, 'Checked') }, 'Check now') : null,
+      session.admin ? h('a', { class: 'btn small', href: `#/monitor/${m.id}/edit` }, 'Edit') : null,
       h('a', { class: 'btn small primary', href: `#/monitor/${m.id}` }, 'Full details →')),
     m.description ? h('p', { class: 'muted small' }, m.description) : null,
     m.type === 'snmp' ? snmpSummary(m, snmpSnapshot(m.id, m.lastCheck, () => ui.info === m.id && renderInfo())) : null,
@@ -1341,12 +1346,13 @@ async function renderDetail(id, isUpdate = false) {
         }))) : null,
         m.description ? h('p', { class: 'muted' }, m.description) : null),
       h('div', { class: 'actions' },
-        m.type !== 'group' ? h('button', { class: 'btn', onclick: () => action(`monitors/${id}/check`, 'Checked') }, 'Check now') : null,
+        m.type !== 'group' && session.admin ? h('button', { class: 'btn', onclick: () => action(`monitors/${id}/check`, 'Checked') }, 'Check now') : null,
         h('button', {
           class: 'btn',
           title: 'Show what this depends on and what depends on it',
           onclick: () => go(`#/?focus=${id}`),
         }, 'Trace in Falls'),
+        session.admin ? [
         h('button', { class: 'btn', onclick: () => action(`monitors/${id}/${m.active ? 'pause' : 'resume'}`, m.active ? 'Paused' : 'Resumed') }, m.active ? 'Pause' : 'Resume'),
         h('a', { class: 'btn', href: `#/add?parent=${id}` }, '+ Dependent'),
         h('a', { class: 'btn primary', href: `#/monitor/${id}/edit` }, 'Edit'),
@@ -1358,7 +1364,7 @@ async function renderDetail(id, isUpdate = false) {
             go('#/');
             refresh();
           }),
-        }, 'Delete'))),
+        }, 'Delete')] : null)),
 
     m.status === 'blocked' ? h('div', { class: 'banner blocked' },
       h('strong', null, 'Not being checked. '), `${m.msg || 'Something upstream is down'}. It will be re-checked as soon as that recovers.`) : null,
@@ -1384,7 +1390,7 @@ async function renderDetail(id, isUpdate = false) {
         ui.snmpAllIfs = !ui.snmpAllIfs;
         renderDetail(id, true);
       },
-      editing: ui.snmpEdit,
+      editing: ui.snmpEdit && session.admin,
       onToggleEdit: () => {
         ui.snmpEdit = !ui.snmpEdit;
         renderDetail(id, true);
@@ -1691,26 +1697,30 @@ function tagIconDialog(t, onSaved) {
 // Settings has sections, listed where the monitor list usually is (on phones,
 // as tabs above the page). New kinds of settings get a section here.
 
+// `admin`: only admins see the section (viewers have just Account).
 const SETTINGS = [
-  { id: 'general', label: 'General', note: 'History, version', icon: 'M4 7h9M17 7h3M4 17h3M11 17h9M15 5v4M9 15v4', render: (box) => renderGeneral(box) },
-  { id: 'notifications', label: 'Notifications', note: 'Rules, channels, problem definitions', icon: 'M21 3 3 10.5l7 3 3 7.5zM10 13.5 21 3', render: (box) => renderNotifications(box, { state }) },
-  { id: 'tags', label: 'Tags', note: 'Names, colours, icons', icon: 'M3.5 12.5V4h8.5l8.5 8.5-8 8zM8 7v3M6.5 8.5h3', render: (box) => renderTags(box) },
-  { id: 'import', label: 'Import & export', note: 'Monitors as a CSV file', icon: 'M12 3v11M7.5 9.5 12 14l4.5-4.5M4 15v4.5h16V15', render: (box) => fill(box, h('div', { class: 'stack' }, h('div', { class: 'page-head' }, h('h1', null, 'Import & export')), csvCard())) },
-  { id: 'mibs', label: 'MIB library', note: 'Names for SNMP values', icon: 'M6 4h10.5A2.5 2.5 0 0 1 19 6.5V20H8.5A2.5 2.5 0 0 1 6 17.5zM6 17.5A2.5 2.5 0 0 1 8.5 15H19', render: (box) => fill(box, h('div', { class: 'stack' }, h('div', { class: 'page-head' }, h('h1', null, 'MIB library')), mibLibraryCard())) },
+  { id: 'general', admin: true, label: 'General', note: 'History, version', icon: 'M4 7h9M17 7h3M4 17h3M11 17h9M15 5v4M9 15v4', render: (box) => renderGeneral(box) },
+  { id: 'notifications', admin: true, label: 'Notifications', note: 'Rules, channels, problem definitions', icon: 'M21 3 3 10.5l7 3 3 7.5zM10 13.5 21 3', render: (box) => renderNotifications(box, { state }) },
+  { id: 'tags', admin: true, label: 'Tags', note: 'Names, colours, icons', icon: 'M3.5 12.5V4h8.5l8.5 8.5-8 8zM8 7v3M6.5 8.5h3', render: (box) => renderTags(box) },
+  { id: 'users', admin: true, label: 'Users', note: 'Accounts, what they see, SSO', icon: 'M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20c.5-3.5 3-5.5 6.5-5.5s6 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 6.5M18 14.8c2 .7 3.2 2.5 3.5 5.2', render: (box) => renderUsers(box, { state }) },
+  { id: 'import', admin: true, label: 'Import & export', note: 'Monitors as a CSV file', icon: 'M12 3v11M7.5 9.5 12 14l4.5-4.5M4 15v4.5h16V15', render: (box) => fill(box, h('div', { class: 'stack' }, h('div', { class: 'page-head' }, h('h1', null, 'Import & export')), csvCard())) },
+  { id: 'mibs', admin: true, label: 'MIB library', note: 'Names for SNMP values', icon: 'M6 4h10.5A2.5 2.5 0 0 1 19 6.5V20H8.5A2.5 2.5 0 0 1 6 17.5zM6 17.5A2.5 2.5 0 0 1 8.5 15H19', render: (box) => fill(box, h('div', { class: 'stack' }, h('div', { class: 'page-head' }, h('h1', null, 'MIB library')), mibLibraryCard())) },
+  { id: 'account', label: 'Account', note: 'You, your password, sign out', icon: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4.5 20.5c.7-4 3.6-6.5 7.5-6.5s6.8 2.5 7.5 6.5', render: (box) => renderAccount(box, { state }) },
 ];
 const settingsHref = (id) => (id === 'general' ? '#/settings' : `#/settings/${id}`);
 const settingsIcon = (d) => svg('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' }, svg('path', { d }));
 
 async function renderSettings(section) {
-  const cur = SETTINGS.find((s) => s.id === section) ?? SETTINGS[0];
-  fill($('#settings-nav'), SETTINGS.map((s) => h('a', { class: `settings-link${s === cur ? ' on' : ''}`, href: settingsHref(s.id), 'aria-current': s === cur ? 'page' : null },
+  const sections = SETTINGS.filter((s) => session.admin || !s.admin);
+  const cur = sections.find((s) => s.id === section) ?? sections[0];
+  fill($('#settings-nav'), sections.map((s) => h('a', { class: `settings-link${s === cur ? ' on' : ''}`, href: settingsHref(s.id), 'aria-current': s === cur ? 'page' : null },
     settingsIcon(s.icon),
     h('span', { class: 'settings-link-text' }, h('span', null, s.label), h('span', { class: 'settings-link-note' }, s.note)))));
   const body = h('div', { class: 'settings-body' });
   fill($('#main'), h('div', { class: 'settings-page' },
     // phones: the sections as tabs (the left column is the monitor list's)
     h('nav', { class: 'settings-tabs', 'aria-label': 'Settings sections' },
-      SETTINGS.map((s) => h('a', { class: s === cur ? 'on' : null, href: settingsHref(s.id), 'aria-current': s === cur ? 'page' : null }, s.label))),
+      sections.map((s) => h('a', { class: s === cur ? 'on' : null, href: settingsHref(s.id), 'aria-current': s === cur ? 'page' : null }, s.label))),
     body));
   $('.settings-tabs .on')?.scrollIntoView({ block: 'nearest', inline: 'center' });
   await cur.render(body);
@@ -1910,6 +1920,7 @@ async function route() {
     if (r.name === 'dashboard') await renderDashboard();
     else if (r.name === 'monitor') await renderDetail(r.id);
     else if (r.name === 'snmp') await renderSnmpBrowser($('#main'), state.byId.get(r.id), { pick: r.pick, navigate: go });
+    else if ((r.name === 'edit' || r.name === 'add') && !session.admin) fill($('#main'), h('div', { class: 'card' }, h('p', null, 'Only an admin can add or change monitors.'), h('a', { href: '#/' }, 'Back to the falls')));
     else if (r.name === 'edit') await renderMonitorForm($('#main'), { state, id: r.id, navigate: go });
     else if (r.name === 'add') await renderMonitorForm($('#main'), { state, presetParent: r.parent, navigate: go });
     else if (r.name === 'alerts') await renderAlerts();
@@ -1970,5 +1981,9 @@ window.addEventListener('resize', () => {
   }, 250);
 });
 
+// Who is signed in decides what the page offers (a 401 goes to login.html).
+session.me = await api('me');
+document.body.classList.toggle('viewer', !session.admin);
+if (!session.admin) for (const el of document.querySelectorAll('#tab-settings span, .nav [data-route="settings"]')) el.textContent = 'Account';
 await poll();
 route();

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Store, MIGRATIONS } from '../src/db.js';
 import { Engine } from '../src/engine.js';
+import { Auth } from '../src/auth.js';
 import { createApi } from '../src/api.js';
 import { renameInExpr } from '../public/js/filter.js';
 import { matchRules, ruleProblem } from '../public/js/rules.js';
@@ -27,7 +28,7 @@ function setup() {
     cancel: () => {},
   });
   const icons = { describe: () => null, sync: () => {}, hasUpload: () => false, saveUpload: () => {} };
-  const handle = createApi({ store, engine, icons });
+  const handle = createApi({ store, engine, icons, auth: new Auth({ store, mode: 'off' }) });
   const call = (method, p, body) => handle({ method }, new URL(`http://x${p}`), body);
   const ids = {};
   const add = (name, parent) => {

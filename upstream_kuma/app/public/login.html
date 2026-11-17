@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Sign in · Upstream Kuma</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <meta name="theme-color" content="#051B2B">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Upstream Kuma">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="login-page">
+  <!-- streams now and then flowing out of the node (login.js) -->
+  <svg id="login-streams" class="login-streams" aria-hidden="true"></svg>
+  <main class="login-wrap">
+    <div class="login-brand">
+      <div id="login-node" class="login-node"></div>
+      <span>Upstream Kuma</span>
+    </div>
+    <div id="login" class="card login-card" aria-live="polite"></div>
+  </main>
+  <script type="module" src="js/login.js"></script>
+</body>
+</html>

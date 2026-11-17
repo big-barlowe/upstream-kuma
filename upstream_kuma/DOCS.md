@@ -75,7 +75,7 @@ On a phone (or any window up to 700px wide), the page changes shape so the Falls
 
 ## Settings
 
-The **Settings** page has sections, listed on the left (on a phone, as tabs along the top): **General** (how long to keep heartbeat history, and the version), **Notifications** (rules, channels and problem definitions), **Tags**, **Import & export** (monitors as a CSV file) and **MIB library**. Keeping them here, away from the monitor list, means tags and notifications aren't changed by accident.
+The **Settings** page has sections, listed on the left (on a phone, as tabs along the top): **General** (how long to keep heartbeat history, and the version), **Notifications** (rules, channels and problem definitions), **Tags**, **Users** (accounts, what viewers see, and single sign-on), **Import & export** (monitors as a CSV file), **MIB library** and **Account** (your own password, and signing out). Keeping them here, away from the monitor list, means tags and notifications aren't changed by accident.
 
 ## Tags
 
@@ -198,11 +198,31 @@ A vendor MIB usually imports others from the same vendor (often `<VENDOR>-SMI` o
 | Option | Default | |
 |---|---|---|
 | `log_level` | `info` | `debug`, `info`, `warning` or `error`. |
-| `allow_direct_access` | `false` | Allow the web UI on the add-on's mapped port without going through Home Assistant. Leave this off unless you have your own authentication in front of it: the UI itself has no login. |
+| `allow_direct_access` | `false` | Allow the web UI on the add-on's mapped port without going through Home Assistant. There it asks people to sign in with an account (see [Users and sign-in](#users-and-sign-in)). |
 
 ### Push monitors and the network port
 
-The UI is served through Home Assistant ingress (sidebar → **Upstream Kuma**), which handles authentication. Push monitors need to be reachable by whatever sends the push, so map a host port under **Network**. With `allow_direct_access: false` (the default), only `/api/push/…` is reachable on that port.
+The UI is served through Home Assistant ingress (sidebar → **Upstream Kuma**), which handles authentication. Push monitors need to be reachable by whatever sends the push, so map a host port under **Network**. With `allow_direct_access: false` (the default), only `/api/push/…` is reachable on that port; with it on, the web UI is too, behind the sign-in page.
+
+## Users and sign-in
+
+Through Home Assistant's sidebar you are always an **admin**: Home Assistant has signed you in already. Accounts are for everyone else, who open Upstream Kuma at its own address: the add-on's port (with `allow_direct_access` on) or a Docker install. Make them under **Settings → Users**.
+
+- **Admins** can do everything.
+- **Viewers** see the monitors their **scope** picks, and everything upstream of those, and can't change anything: no adding, editing, pausing, moving, tagging or settings. Their Settings page is just **Account** (their password, and signing out).
+
+A viewer's scope works like the tag filter: pick tags (any or all of them), or write an expression under **Advanced**, such as `Cameras & (North | South)`; or tick **Every monitor** for a read-only view of everything. The monitors with those tags are in scope, and so is everything they depend on, so a viewer can tell when the cause of an outage is further up (the WAN, a core switch) without seeing the rest of your network. A viewer sees only the tags its monitors carry, the problems open on what it sees, and alerts about it, with the lists of downstream monitors cut to the ones it can see. A new account's scope is empty, so it sees nothing until you pick something; a scope whose tags were deleted, or whose expression no longer works, also shows nothing rather than everything.
+
+Changing someone's password, role or turning their account off signs them out everywhere. There must always be an admin who can sign in (except under Home Assistant, where the sidebar always gets you in).
+
+### Single sign-on (OpenID Connect)
+
+Under **Settings → Users → Single sign-on**, connect a provider such as Authentik, Authelia, Keycloak, Google or Microsoft Entra:
+
+1. At the provider, make an OpenID Connect client (confidential, authorization code flow) with the **redirect URI** shown on the page. Under Home Assistant, fill in the **Public URL** first (the address people open Upstream Kuma at), since the sidebar's address is Home Assistant's.
+2. Enter the **issuer URL** (its discovery document is at `<issuer>/.well-known/openid-configuration`), the client ID and secret, and a label for the button, and turn it on. Saving checks that the provider answers.
+
+The sign-in page then has a **Sign in with …** button. Someone signing in that way gets the account linked to their identity, or the one with their (verified) email address, which is linked from then on. Anyone else is turned away, unless **Create an account on first sign-in** is on: then they get a viewer account that sees nothing until you give it a scope. With an **admin group**, members of that group (in the provider's `groups` claim, or another you name) are admins and everyone else a viewer, set at every sign-in. Turn off **Allow password sign-in for everyone** to make everyone use single sign-on; admins can still use a password, in case the provider is down.
 
 ## Import and export (CSV)
 

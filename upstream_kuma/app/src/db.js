@@ -216,6 +216,34 @@ export const MIGRATIONS = [
   `
   ALTER TABLE monitors ADD COLUMN icon_size INTEGER NOT NULL DEFAULT 100;
   `,
+  // v11: accounts. An admin can do everything; a viewer sees the monitors its
+  // scope (a tag filter, JSON {all, tagIds, tagMatch, tagExpr}) matches, and
+  // what is upstream of them, and changes nothing. `password` is a scrypt hash
+  // (null: signs in by SSO only); `oidc_sub` is "<issuer> <sub>" once linked.
+  // Sessions store the SHA-256 of the cookie's token, never the token.
+  `
+  CREATE TABLE users (
+    id         INTEGER PRIMARY KEY,
+    username   TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+    name       TEXT    NOT NULL DEFAULT '',
+    email      TEXT    NOT NULL DEFAULT '',
+    role       TEXT    NOT NULL DEFAULT 'viewer',
+    password   TEXT,
+    oidc_sub   TEXT    UNIQUE,
+    scope      TEXT    NOT NULL DEFAULT '{}',
+    active     INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    last_login INTEGER
+  );
+  CREATE TABLE sessions (
+    token      TEXT    PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    seen_at    INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+  );
+  CREATE INDEX sessions_user ON sessions(user_id);
+  `,
 ];
 
 const TAG_COLS = 'id, name, color, icon, icon_updated_at AS iconV';
@@ -257,6 +285,24 @@ function rowToMonitor(r) {
     iconSize: r.icon_size,
     pushToken: r.push_token,
     createdAt: r.created_at,
+  };
+}
+
+const USER_COLS = 'id, username, name, email, role, password, oidc_sub, scope, active, created_at, last_login';
+
+function rowToUser(r) {
+  return {
+    id: r.id,
+    username: r.username,
+    name: r.name,
+    email: r.email,
+    role: r.role === 'admin' ? 'admin' : 'viewer',
+    passwordHash: r.password ?? null,
+    oidcSub: r.oidc_sub ?? null,
+    scope: { all: false, tagIds: [], tagMatch: 'any', tagExpr: '', ...JSON.parse(r.scope) },
+    active: Boolean(r.active),
+    createdAt: r.created_at,
+    lastLogin: r.last_login ?? null,
   };
 }
 
@@ -736,9 +782,94 @@ export class Store {
 
   // ---- settings -----------------------------------------------------------
 
+  // ---- users and sessions
+
+  listUsers() {
+    return this.q(`SELECT ${USER_COLS} FROM users ORDER BY username COLLATE NOCASE`).all().map(rowToUser);
+  }
+
+  getUser(id) {
+    const r = this.q(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(id);
+    return r ? rowToUser(r) : null;
+  }
+
+  findUser(username) {
+    const r = this.q(`SELECT ${USER_COLS} FROM users WHERE username = ? COLLATE NOCASE`).get(String(username));
+    return r ? rowToUser(r) : null;
+  }
+
+  findUserBySub(sub) {
+    const r = this.q(`SELECT ${USER_COLS} FROM users WHERE oidc_sub = ?`).get(sub);
+    return r ? rowToUser(r) : null;
+  }
+
+  findUsersByEmail(email) {
+    return this.q(`SELECT ${USER_COLS} FROM users WHERE email = ? COLLATE NOCASE AND email != ''`).all(String(email)).map(rowToUser);
+  }
+
+  countUsers() {
+    return this.q('SELECT COUNT(*) AS n FROM users').get().n;
+  }
+
+  createUser(u) {
+    return Number(this.q(`INSERT INTO users (username, name, email, role, password, oidc_sub, scope, active, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      u.username, u.name ?? '', u.email ?? '', u.role === 'admin' ? 'admin' : 'viewer', u.passwordHash ?? null,
+      u.oidcSub ?? null, JSON.stringify(u.scope ?? {}), u.active === false ? 0 : 1, Date.now(),
+    ).lastInsertRowid);
+  }
+
+  // Only the fields given change.
+  updateUser(id, u) {
+    const cols = { username: 'username', name: 'name', email: 'email', role: 'role', passwordHash: 'password', oidcSub: 'oidc_sub', scope: 'scope', active: 'active', lastLogin: 'last_login' };
+    for (const [k, col] of Object.entries(cols)) {
+      if (u[k] === undefined) continue;
+      const v = k === 'scope' ? JSON.stringify(u[k]) : k === 'active' ? (u[k] ? 1 : 0) : u[k];
+      this.q(`UPDATE users SET ${col} = ? WHERE id = ?`).run(v, id);
+    }
+  }
+
+  deleteUser(id) {
+    return this.q('DELETE FROM users WHERE id = ?').run(id).changes > 0;
+  }
+
+  createSession(tokenHash, userId, ttl) {
+    const now = Date.now();
+    this.q('INSERT INTO sessions (token, user_id, created_at, seen_at, expires_at) VALUES (?, ?, ?, ?, ?)').run(tokenHash, userId, now, now, now + ttl);
+    this.q('DELETE FROM sessions WHERE expires_at < ?').run(now);
+  }
+
+  getSession(tokenHash) {
+    const r = this.q('SELECT user_id, seen_at, expires_at FROM sessions WHERE token = ?').get(tokenHash);
+    return r ? { userId: r.user_id, seenAt: r.seen_at, expiresAt: r.expires_at } : null;
+  }
+
+  touchSession(tokenHash, expiresAt) {
+    this.q('UPDATE sessions SET seen_at = ?, expires_at = ? WHERE token = ?').run(Date.now(), expiresAt, tokenHash);
+  }
+
+  deleteSession(tokenHash) {
+    this.q('DELETE FROM sessions WHERE token = ?').run(tokenHash);
+  }
+
+  // All of a user's sessions, or all but one (`keep`, a token hash).
+  deleteUserSessions(userId, keep = null) {
+    this.q('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(userId, keep ?? '');
+  }
+
+  // A setting outside DEFAULT_SETTINGS (the SSO configuration).
+  getSetting(key, def = null) {
+    const r = this.q('SELECT value FROM settings WHERE key = ?').get(key);
+    return r ? JSON.parse(r.value) : def;
+  }
+
+  setSetting(key, value) {
+    this.q('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, JSON.stringify(value));
+  }
+
   getSettings() {
     const out = { ...DEFAULT_SETTINGS };
-    for (const r of this.q('SELECT key, value FROM settings').all()) out[r.key] = JSON.parse(r.value);
+    for (const r of this.q('SELECT key, value FROM settings').all()) if (r.key in DEFAULT_SETTINGS) out[r.key] = JSON.parse(r.value);
     return out;
   }
 

@@ -3,7 +3,7 @@
 // "All data" browser (renderSnmpBrowser). How it is shown (extra OIDs,
 // hidden items, what the Falls card says) is the monitor's `display`, saved
 // with PUT api/monitors/:id/snmp-display.
-import { api, h, fill, fmtAgo, toast, confirmDialog } from './util.js';
+import { api, h, fill, fmtAgo, toast, confirmDialog, session } from './util.js';
 import { oidName, oidGroup } from './snmp-names.js';
 import { pickValueDialog } from './problems.js';
 
@@ -158,7 +158,7 @@ export function snmpSections(m, snap, opts) {
   // Title and its details on the left, buttons (`right`) on the right.
   const head = (title, left = [], right = []) => h('div', { class: 'card-head snmp-head' }, h('h2', null, title), left, h('span', { class: 'snmp-head-right' }, right));
   const browse = h('a', { class: 'btn small', href: opts.browseHref, title: 'Everything the device reports, read live' }, 'All data');
-  const customize = h('button', { class: `btn small${editing ? ' primary' : ''}`, onclick: opts.onToggleEdit, 'aria-pressed': String(editing) }, editing ? 'Done' : 'Customize');
+  const customize = h('button', { class: `btn small admin-only${editing ? ' primary' : ''}`, onclick: opts.onToggleEdit, 'aria-pressed': String(editing) }, editing ? 'Done' : 'Customize');
   if (!d) {
     return h('section', { class: 'card' }, head('Device', [], [browse]),
       h('p', { class: 'muted' }, snap ? 'No SNMP data yet. It is collected with every successful check.' : 'Loading…'));
@@ -556,10 +556,10 @@ export async function renderSnmpBrowser(main, m, { pick = null, navigate = (hash
       h('div', null,
         h('div', { class: 'crumbs' }, h('a', { href: `#/monitor/${m.id}` }, `← ${m.name}`)),
         h('h1', null, 'All SNMP data'),
-        h('p', { class: 'muted' }, `Everything ${m.name} reports, read live. Click a name for what it means. + Page adds a value to the monitor’s page, + Card to its card in the Falls (at most ${CARD_MAX}), + Problem to a problem definition, to alert on it.`)),
+        h('p', { class: 'muted' }, `Everything ${m.name} reports, read live. Click a name for what it means.${session.admin ? ` + Page adds a value to the monitor’s page, + Card to its card in the Falls (at most ${CARD_MAX}), + Problem to a problem definition, to alert on it.` : ''}`)),
       h('div', { class: 'actions' },
-        uploadButton(reread),
-        h('a', { class: 'btn ghost', href: '#/settings/mibs', title: 'MIB library (Settings)' }, 'MIBs'),
+        session.admin ? uploadButton(reread) : null,
+        h('a', { class: 'btn ghost admin-only', href: '#/settings/mibs', title: 'MIB library (Settings)' }, 'MIBs'),
         h('a', { class: 'btn', href: `#/monitor/${m.id}` }, 'Back'))),
     b.pickFor ? h('div', { class: 'banner pick-banner' },
       h('div', null,
