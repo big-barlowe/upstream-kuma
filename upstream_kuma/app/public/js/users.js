@@ -75,7 +75,9 @@ export async function renderUsers(box, { state }) {
               u.name ? h('div', { class: 'muted small' }, u.username) : null),
             h('td', null, roleBadge(u.role), u.active ? null : h('span', { class: 'muted small' }, ' turned off')),
             h('td', null, scopeSummary(u, state)),
-            h('td', { class: 'small' }, [u.password ? 'Password' : null, u.sso ? 'SSO' : u.email && sso.enabled ? 'SSO (not yet)' : null].filter(Boolean).join(' · ') || '—'),
+            h('td', { class: 'small' }, [u.password ? 'Password' : null, u.sso ? 'SSO' : u.email && sso.enabled ? 'SSO (not yet)' : null].filter(Boolean).join(' · ') || '—',
+              // the identity the provider said it was, at its last sign-in
+              u.ssoName ? h('div', { class: 'muted user-sso-name', title: 'The single sign-on identity linked to this account' }, u.ssoName) : null),
             h('td', { class: 'small muted nowrap', title: u.lastLogin ? fmtTime(u.lastLogin) : '' }, fmtAgo(u.lastLogin)),
             h('td', { class: 'nowrap' }, h('button', { class: 'btn small', onclick: () => edit(u) }, 'Edit')))))))
         : h('p', { class: 'muted' }, session.me.via === 'ingress'
@@ -167,7 +169,8 @@ export async function renderUsers(box, { state }) {
           h('small', null, sso.enabled ? 'At least 8 characters. Leave it out for single sign-on only.' : 'At least 8 characters.')),
         !isNew && original.password && (original.sso || (sso.enabled && d.email))
           ? h('label', { class: 'check' }, removePw, ' No password: single sign-on only') : null,
-        !isNew && original.sso ? h('p', { class: 'small' }, 'Linked to a single sign-on identity. ',
+        !isNew && original.sso ? h('p', { class: 'small' },
+          original.ssoName ? ['Linked to the single sign-on identity ', h('strong', null, original.ssoName), '. '] : 'Linked to a single sign-on identity (named here after its next sign-in). ',
           h('button', {
             type: 'button',
             class: 'linkish',
@@ -277,7 +280,8 @@ function ssoCard(box, cfg) {
       h('div', { class: 'form-grid' },
         text('adminGroup', 'Admin group', 'Optional. Members of this group are admins, everyone else a viewer, set at every sign-in.', { placeholder: 'upstream-kuma-admins' }),
         text('groupsClaim', 'Groups claim', 'Where the provider lists groups.', { placeholder: 'groups' })),
-      check('passwordLogin', 'Allow password sign-in for everyone (otherwise admins only, in case the provider is down)')),
+      check('passwordLogin', 'Allow password sign-in for everyone (otherwise admins only, in case the provider is down)'),
+      check('selectAccount', 'Ask which account every time (the provider shows its account picker instead of signing in whoever is already signed in there)')),
     h('div', { class: 'form-actions' }, h('button', { class: 'btn primary', type: 'submit' }, 'Save'))));
 }
 
@@ -286,7 +290,7 @@ function ssoCard(box, cfg) {
 export async function renderAccount(box, { state }) {
   const me = session.me;
   const how = { ingress: 'Signed in through Home Assistant.', open: 'Sign-in is turned off (AUTH=off): everyone who can reach Upstream Kuma is an admin.' }[me.via]
-    ?? `Signed in with ${me.sso && !me.password ? 'single sign-on' : me.sso ? 'a password or single sign-on' : 'a password'}.`;
+    ?? `Signed in with ${me.sso && !me.password ? 'single sign-on' : me.sso ? 'a password or single sign-on' : 'a password'}${me.ssoName ? ` (as ${me.ssoName})` : ''}.`;
   const cards = [h('div', { class: 'card' },
     h('div', { class: 'card-head' }, h('h2', null, me.name || me.username), roleBadge(me.role)),
     me.name ? h('p', { class: 'muted small' }, me.username) : null,

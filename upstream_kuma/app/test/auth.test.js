@@ -217,7 +217,7 @@ test('accounts: the last admin stays, nobody deletes themselves', async () => {
 test('under Home Assistant, ingress is an admin and the direct port needs an account', async () => {
   const t = setup({ addon: true });
   const ingress = t.browser('172.30.32.2');
-  assert.deepEqual(await ingress.call('GET', '/api/me'), { id: 0, username: 'homeassistant', name: 'Home Assistant', email: '', role: 'admin', via: 'ingress', password: false, sso: false });
+  assert.deepEqual(await ingress.call('GET', '/api/me'), { id: 0, username: 'homeassistant', name: 'Home Assistant', email: '', role: 'admin', via: 'ingress', password: false, sso: false, ssoName: '' });
   const direct = t.browser('192.168.1.20');
   // no setup from the network: accounts are made in Settings, through ingress
   assert.equal((await direct.call('GET', '/api/auth/status')).setup, false);
@@ -302,6 +302,7 @@ test('SSO: settings, linking by email, creating accounts, the admin group', asyn
   const start = await b.call('GET', '/api/auth/oidc/start?next=%23%2Fmonitor%2F3');
   const q = new URL(start.location).searchParams;
   assert.deepEqual([q.get('response_type'), q.get('client_id'), q.get('code_challenge_method'), q.get('scope')], ['code', 'uk', 'S256', 'openid profile email']);
+  assert.equal(q.get('prompt'), null); // the provider may sign in whoever it already knows
   assert.ok(b.jar.get('uk_oidc'));
 
   // no account with that email yet
@@ -317,6 +318,9 @@ test('SSO: settings, linking by email, creating accounts, the admin group', asyn
   const me = await b.call('GET', '/api/me');
   assert.deepEqual([me.username, me.role, me.sso], ['kim', 'viewer', true]);
   assert.equal(t.store.getUser(kim.id).oidcSub, `${ISSUER} u-1`);
+  // the Users page and the account say which identity is linked
+  assert.equal(me.ssoName, 'kim@example.com');
+  assert.equal((await admin.call('GET', '/api/users')).find((u) => u.id === kim.id).ssoName, 'kim@example.com');
   assert.equal(idp.requests.find((r) => r.url.pathname === '/token').init.headers.Authorization, `Basic ${Buffer.from('uk:s3cret').toString('base64')}`);
 
   // a stranger gets an empty viewer when accounts are created on sign-in
@@ -340,6 +344,40 @@ test('SSO: settings, linking by email, creating accounts, the admin group', asyn
   await admin.call('POST', '/api/users', { username: 'pat', password: 'whatever1' });
   await assert.rejects(t.browser().call('POST', '/api/auth/login', { username: 'pat', password: 'whatever1' }), /Sign in with Authentik/);
   await t.browser().call('POST', '/api/auth/login', { username: 'alex', password: 'correct horse' });
+
+  // asking for the provider's account picker every time
+  await admin.call('PUT', '/api/sso', { selectAccount: true });
+  assert.equal(new URL((await t.browser().call('GET', '/api/auth/oidc/start')).location).searchParams.get('prompt'), 'select_account');
+});
+
+test('SSO: the Users page shows which identity an account is linked to', async () => {
+  const idp = fakeIdp();
+  const t = setup({ fetch: idp.fetch });
+  const admin = await withAdmin(t);
+  await admin.call('PUT', '/api/sso', { enabled: true, issuer: ISSUER, clientId: 'uk' });
+  const ab = await admin.call('POST', '/api/users', { username: 'abarlowe', email: 'abarlowe@domain.org', role: 'admin' });
+  const ax = await admin.call('POST', '/api/users', { username: 'adminalex', email: 'adminalex@domain.org', role: 'admin' });
+  const signIn = async (claims) => {
+    idp.claims = claims;
+    const b = t.browser();
+    await ssoSignIn(t, idp, b);
+    return b.call('GET', '/api/me');
+  };
+  // Entra: no email_verified, the UPN as preferred_username
+  assert.equal((await signIn({ sub: 'e-1', email: 'abarlowe@domain.org', preferred_username: 'abarlowe@domain.org' })).username, 'abarlowe');
+  assert.equal((await signIn({ sub: 'e-2', email: 'adminalex@domain.org', preferred_username: 'adminalex@domain.org' })).username, 'adminalex');
+  // without an email the username names it
+  assert.equal((await signIn({ sub: 'e-2', preferred_username: 'adminalex@domain.org' })).ssoName, 'adminalex@domain.org');
+  // A link wins over the email. If an identity is linked to the wrong
+  // account, the page shows it under that account, and Unlink fixes it.
+  t.store.updateUser(ab.id, { oidcSub: `${ISSUER} e-3` });
+  t.store.updateUser(ax.id, { oidcSub: null });
+  assert.equal((await signIn({ sub: 'e-3', email: 'adminalex@domain.org' })).username, 'abarlowe');
+  const users = await admin.call('GET', '/api/users');
+  assert.equal(users.find((u) => u.id === ab.id).ssoName, 'adminalex@domain.org');
+  await admin.call('PUT', `/api/users/${ab.id}`, { unlinkSso: true });
+  assert.deepEqual([t.store.getUser(ab.id).oidcSub, t.store.getUser(ab.id).oidcName], [null, '']);
+  assert.equal((await signIn({ sub: 'e-3', email: 'adminalex@domain.org' })).username, 'adminalex');
 });
 
 test('SSO: replays, other browsers and bad signatures are refused', async () => {

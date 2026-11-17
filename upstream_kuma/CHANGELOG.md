@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.20.3
+
+- **The Users page shows which single sign-on identity each account is linked to** (its email address, or its username, as the provider gave it at the last sign-in), under **Signs in with** and in the account's editor, and Settings → Account says who you signed in as. A link always wins over the email address, so an identity linked to the wrong account was hard to spot; now it shows, and **Unlink** fixes it. Accounts linked before this show their identity after their next sign-in.
+- **Every SSO sign-in is logged**: who the provider said it was, which account that became, and how (an existing link, by email, or a new account). Refused and failed sign-ins are logged too.
+- **New: Ask which account every time** (Settings → Users → Single sign-on). The provider shows its account picker instead of signing in whoever is already signed in there, so switching between two accounts (an everyday one and an admin one, say) doesn't need a private window. Microsoft Entra and Google support it.
+
 ## 0.20.2
 
 - **Viewers can filter by every tag on the monitors they see.** Tags decide which monitors are in a viewer's scope; those monitors then decide which tags the viewer can filter by. A viewer scoped to Cabin whose monitors are also tagged Virtual can filter by Virtual, and tags on the monitors upstream of them (the WAN's ISP tag, say) now show too. Before, a tag that was only on upstream monitors was hidden.

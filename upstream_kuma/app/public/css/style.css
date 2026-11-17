@@ -1458,6 +1458,7 @@ table.users-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; 
 .users-table tr.editing td { background: rgba(56, 189, 248, 0.06); }
 .users-table tr.user-off td { opacity: 0.6; }
 .user-name { font-weight: 600; }
+.user-sso-name { font-size: 12px; overflow-wrap: anywhere; }
 .user-scope { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .user-scope-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .scope-none { color: #fca5a5; }

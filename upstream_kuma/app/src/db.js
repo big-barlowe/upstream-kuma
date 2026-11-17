@@ -244,6 +244,11 @@ export const MIGRATIONS = [
   );
   CREATE INDEX sessions_user ON sessions(user_id);
   `,
+  // v12: who a linked SSO identity is (its email, else its username), as the
+  // provider said at the last sign-in, so the Users page can show it.
+  `
+  ALTER TABLE users ADD COLUMN oidc_name TEXT NOT NULL DEFAULT '';
+  `,
 ];
 
 const TAG_COLS = 'id, name, color, icon, icon_updated_at AS iconV';
@@ -288,7 +293,7 @@ function rowToMonitor(r) {
   };
 }
 
-const USER_COLS = 'id, username, name, email, role, password, oidc_sub, scope, active, created_at, last_login';
+const USER_COLS = 'id, username, name, email, role, password, oidc_sub, oidc_name, scope, active, created_at, last_login';
 
 function rowToUser(r) {
   return {
@@ -299,6 +304,7 @@ function rowToUser(r) {
     role: r.role === 'admin' ? 'admin' : 'viewer',
     passwordHash: r.password ?? null,
     oidcSub: r.oidc_sub ?? null,
+    oidcName: r.oidc_sub ? r.oidc_name : '',
     scope: { all: false, tagIds: [], tagMatch: 'any', tagExpr: '', ...JSON.parse(r.scope) },
     active: Boolean(r.active),
     createdAt: r.created_at,
@@ -812,16 +818,16 @@ export class Store {
   }
 
   createUser(u) {
-    return Number(this.q(`INSERT INTO users (username, name, email, role, password, oidc_sub, scope, active, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    return Number(this.q(`INSERT INTO users (username, name, email, role, password, oidc_sub, oidc_name, scope, active, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       u.username, u.name ?? '', u.email ?? '', u.role === 'admin' ? 'admin' : 'viewer', u.passwordHash ?? null,
-      u.oidcSub ?? null, JSON.stringify(u.scope ?? {}), u.active === false ? 0 : 1, Date.now(),
+      u.oidcSub ?? null, u.oidcName ?? '', JSON.stringify(u.scope ?? {}), u.active === false ? 0 : 1, Date.now(),
     ).lastInsertRowid);
   }
 
   // Only the fields given change.
   updateUser(id, u) {
-    const cols = { username: 'username', name: 'name', email: 'email', role: 'role', passwordHash: 'password', oidcSub: 'oidc_sub', scope: 'scope', active: 'active', lastLogin: 'last_login' };
+    const cols = { username: 'username', name: 'name', email: 'email', role: 'role', passwordHash: 'password', oidcSub: 'oidc_sub', oidcName: 'oidc_name', scope: 'scope', active: 'active', lastLogin: 'last_login' };
     for (const [k, col] of Object.entries(cols)) {
       if (u[k] === undefined) continue;
       const v = k === 'scope' ? JSON.stringify(u[k]) : k === 'active' ? (u[k] ? 1 : 0) : u[k];

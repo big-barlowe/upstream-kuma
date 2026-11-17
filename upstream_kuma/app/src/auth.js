@@ -81,6 +81,7 @@ export const publicUser = (u) => u && ({
   active: u.active,
   password: Boolean(u.passwordHash),
   sso: Boolean(u.oidcSub),
+  ssoName: u.oidcSub ? u.oidcName || '' : '',
   createdAt: u.createdAt,
   lastLogin: u.lastLogin,
 });

@@ -1,6 +1,6 @@
 import { Graph } from './graph.js';
 import { deliver, providerCatalog, providers } from './notifier.js';
-import { config, isAddon } from './config.js';
+import { config, isAddon, log } from './config.js';
 import { decodeDataUrl } from './icons.js';
 import { HttpError, badRequest, int, idList, normalizeMonitor, normalizeTag } from './validate.js';
 import { exportCsv, importCsv, CSV_COLUMNS, CSV_EXAMPLE, csvTemplate } from './transfer.js';
@@ -812,6 +812,7 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
     via: who.via,
     password: Boolean(who.user.passwordHash),
     sso: Boolean(who.user.oidcSub),
+    ssoName: who.user.oidcSub ? who.user.oidcName || '' : '',
   });
 
   const normalizeScope = (v, base = {}) => {
@@ -857,31 +858,49 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
 
   const userOr404 = (id) => store.getUser(Number(id)) ?? (() => { throw new HttpError(404, 'User not found'); })();
 
+  // Who the provider says signed in, for the log and the Users page: its
+  // email, else its username (Entra's UPN), else its name.
+  const ssoLabel = (claims) => [claims.email, claims.preferred_username, claims.upn, claims.name]
+    .find((x) => typeof x === 'string' && x.trim())?.trim().slice(0, 200) ?? '';
+
   // An SSO sign-in's account: the one linked to this subject, else the one
   // with its (verified) email address, linked from now on, else a new viewer
-  // if accounts are created on first sign-in.
+  // if accounts are created on first sign-in. Each is logged, with how it
+  // was matched.
   const ssoUser = (claims, issuer) => {
     const c = ssoConfig();
     const sub = `${issuer} ${claims.sub}`;
     const email = typeof claims.email === 'string' ? claims.email.trim().slice(0, 200) : '';
+    const label = ssoLabel(claims);
+    const said = `${label || 'someone'} (subject ${claims.sub})`;
     let u = store.findUserBySub(sub);
+    let how = 'already linked';
     if (!u && email && claims.email_verified !== false) {
       const hits = store.findUsersByEmail(email).filter((x) => !x.oidcSub);
       if (hits.length === 1) {
         u = hits[0];
+        how = 'linked now by email';
         store.updateUser(u.id, { oidcSub: sub });
       }
     }
     if (!u) {
-      if (!c.autoCreate) throw new Error(`There's no Upstream Kuma account for ${email || claims.preferred_username || 'you'} yet. Ask an admin to add one${email ? ' with this email address' : ''}.`);
+      if (!c.autoCreate) {
+        log.warn(`SSO sign-in by ${said}: no account is linked to it${email ? ` or has the email ${email}` : ' and it sent no email'}`);
+        throw new Error(`There's no Upstream Kuma account for ${email || claims.preferred_username || 'you'} yet. Ask an admin to add one${email ? ' with this email address' : ''}.`);
+      }
+      how = 'new account';
       const want = String(claims.preferred_username || email.split('@')[0] || 'user').replace(/[^\p{L}\p{N}._@+-]/gu, '').slice(0, 60) || 'user';
       let username = want;
       for (let i = 2; store.findUser(username); i++) username = `${want}-${i}`;
       const id = store.createUser({ username, name: String(claims.name ?? '').slice(0, 100), email: EMAIL.test(email) ? email : '', role: 'viewer', oidcSub: sub, scope: {} });
       u = store.getUser(id);
     }
-    if (!u.active) throw new Error('Your Upstream Kuma account is turned off.');
+    if (!u.active) {
+      log.warn(`SSO sign-in by ${said}: its account ${u.username} is turned off`);
+      throw new Error('Your Upstream Kuma account is turned off.');
+    }
     const patch = {};
+    if (label !== u.oidcName) patch.oidcName = label;
     if (c.adminGroup) {
       const role = groupsOf(claims, c.groupsClaim).includes(c.adminGroup) ? 'admin' : 'viewer';
       if (role !== u.role && (role === 'admin' || auth.addon || activeAdmins(u.id))) patch.role = role;
@@ -893,6 +912,7 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
       engine.touch();
       u = store.getUser(u.id);
     }
+    log.info(`SSO sign-in by ${said} as ${u.username} (${how}${patch.role ? `, now ${patch.role}` : ''})`);
     return u;
   };
 
@@ -953,8 +973,11 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
         cookieState: parseCookies(req.headers?.cookie)[STATE_COOKIE],
         error: query.error,
         errorDescription: query.error_description,
+      }).catch((err) => {
+        log.warn(`SSO sign-in failed: ${err.message}`);
+        throw err;
       });
-      const user = ssoUser(claims, issuer);
+      const user = ssoUser(claims, issuer); // logs who it was
       return redirect(`../../../${next}`, { 'Set-Cookie': [auth.startSession(user, req), clear] });
     } catch (err) {
       return redirect(toLogin(err.message), { 'Set-Cookie': clear });
@@ -1004,7 +1027,7 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
       if (!existing.oidcSub && !(oidc.enabled() && data.email)) throw new HttpError(400, 'Without a password this account could not sign in');
       patch.passwordHash = null;
     }
-    if (body.unlinkSso) patch.oidcSub = null;
+    if (body.unlinkSso) Object.assign(patch, { oidcSub: null, oidcName: '' });
     store.updateUser(existing.id, patch);
     // Signed-in sessions end when what they were allowed to do changes.
     if (patch.passwordHash !== undefined || data.role !== existing.role || !data.active) {
@@ -1048,6 +1071,7 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
       adminGroup: str('adminGroup', 200),
       groupsClaim: str('groupsClaim', 100) || 'groups',
       passwordLogin: (body.passwordLogin ?? old.passwordLogin) !== false,
+      selectAccount: Boolean(body.selectAccount ?? old.selectAccount),
     };
     for (const k of ['issuer', 'publicUrl']) {
       if (next[k] && !/^https?:\/\/[^\s/]+/.test(next[k])) throw new HttpError(400, `${k === 'issuer' ? 'The issuer' : 'The public URL'} must start with https:// (or http://)`);

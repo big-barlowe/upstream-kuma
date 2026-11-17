@@ -18,6 +18,7 @@ export const OIDC_DEFAULTS = {
   adminGroup: '',
   groupsClaim: 'groups',
   passwordLogin: true,
+  selectAccount: false,
 };
 
 export const CALLBACK_PATH = 'api/auth/oidc/callback';
@@ -178,6 +179,9 @@ export class Oidc {
       code_challenge: crypto.createHash('sha256').update(verifier).digest('base64url'),
       code_challenge_method: 'S256',
     })) url.searchParams.set(k, v);
+    // the provider's account picker every time, rather than signing in
+    // whoever it already has a session for
+    if (c.selectAccount) url.searchParams.set('prompt', 'select_account');
     return { url: url.href, state };
   }
 

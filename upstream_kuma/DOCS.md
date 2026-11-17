@@ -224,6 +224,10 @@ Under **Settings → Users → Single sign-on**, connect a provider such as Auth
 
 The sign-in page then has a **Sign in with …** button. Someone signing in that way gets the account linked to their identity, or the one with their (verified) email address, which is linked from then on. Anyone else is turned away, unless **Create an account on first sign-in** is on: then they get a viewer account that sees nothing until you give it a scope. With an **admin group**, members of that group (in the provider's `groups` claim, or another you name) are admins and everyone else a viewer, set at every sign-in. Turn off **Allow password sign-in for everyone** to make everyone use single sign-on; admins can still use a password, in case the provider is down.
 
+Once an identity is linked to an account, the link wins over the email address. Under **Signs in with**, the Users page shows the identity each account is linked to (its email address, or its username, as the provider gave it at the last sign-in); if one is linked to the wrong account, **Unlink** it in that account's editor and the next sign-in matches by email again. The add-on's log has a line for every SSO sign-in: who the provider said it was, which account that became, and whether by an existing link, by email, or as a new account.
+
+The provider may sign in whoever is already signed in there without asking, which makes switching between two accounts awkward. **Ask which account every time** makes it show its account picker instead (`prompt=select_account`, which Microsoft Entra and Google support).
+
 ## Import and export (CSV)
 
 **Settings → Import & export** exports every monitor to a CSV file and imports monitors from one. Use it to move to a new install, to edit many monitors at once in a spreadsheet, or to set up a batch of monitors from the blank template or the example file.
