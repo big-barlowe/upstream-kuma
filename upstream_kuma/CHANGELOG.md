@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.21.0
+
+- **Sign in with Google.** A card of its own under **Settings → Users** (an OAuth client from Google Cloud: client ID and secret), and a **Sign in with Google** button on the sign-in page, next to your other single sign-on if you have one. A Google sign-in finds the account linked to it, or else the one whose email address or username is its address, but only for Gmail and Google Workspace addresses, which Google vouches for. Nobody gets an account just by having a Google account.
+- **Link a sign-in from your account.** **Settings → Account → Linked sign-ins** links your Google account (or your single sign-on identity) while you're signed in, for Google accounts made with another address (say you@outlook.com) and anyone whose address isn't on their account. An account can have both a Google link and a single sign-on link; each can be unlinked there or by an admin.
+- **The sign-in page no longer says anything about accounts.** A sign-in that finds no account, or a turned-off one, gets the same message, without the address it tried: before, it named the address and told apart an account that didn't exist from one that was turned off, to anyone who could reach the page (and the message went into proxy logs with the address). The add-on's log still has the details.
+- Single sign-on also finds an account whose username is the email address, not only its email field.
+- The sign-in page shows the username and password first, with the single sign-on buttons under them (above them only when passwords are for admins only).
+- **Allow password sign-in for everyone** moved to a **Passwords** card of its own, since it applies to Google too.
+
 ## 0.20.11
 
 - **The Falls is now called Flows**: in the menu, the heading, the phone's tab bar, **Trace in Flows** on a monitor's page, tooltips, help text and the docs. Nothing else changes, and your saved layout, height and zoom are kept.

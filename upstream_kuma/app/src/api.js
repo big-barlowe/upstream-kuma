@@ -11,7 +11,7 @@ import { buildLibrary, mibLibrary, parseMib, setMibLibrary, splitModules } from 
 import { parseTagExpr, renameInExpr } from '../public/js/filter.js';
 import { normalizeValueProblem, inScope, SEVERITIES } from './problems.js';
 import { PASSWORD_MIN, SESSION_COOKIE, clearCookie, cookie, hashPassword, parseCookies, publicUser, randomToken, scopeView, sha256, verifyPassword } from './auth.js';
-import { CALLBACK_PATH, OIDC_DEFAULTS, Oidc, STATE_COOKIE, groupsOf } from './oidc.js';
+import { CALLBACK_PATH, GOOGLE_DEFAULTS, GOOGLE_ISSUER, OIDC_DEFAULTS, Oidc, STATE_COOKIE, groupsOf } from './oidc.js';
 
 // A monitor's config without the keys that only change how its data is
 // shown, to tell whether what it checks has changed.
@@ -45,10 +45,10 @@ const json = (payload, headers = {}) => new RawResponse('application/json', JSON
 // Locations are relative, so they work behind any path prefix.
 const redirect = (location, headers = {}) => new RawResponse('text/plain; charset=utf-8', '', { Location: location, 'Cache-Control': 'no-store', ...headers }, 302);
 
-// Builds the router. `ctx` = { store, engine, icons, auth, oidc? }. `auth`
+// Builds the router. `ctx` = { store, engine, icons, auth, oidc?, google? }. `auth`
 // (an Auth from auth.js) says who each request is; routes are for admins
 // unless marked 'view' (viewers too, filtered to their scope) or 'public'.
-export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store }) }) {
+export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store }), google = new Oidc({ store, id: 'google' }) }) {
   if (!auth) throw new Error('createApi needs auth');
   const routes = [];
   const route = (method, pattern, handler, access = 'admin') => {
@@ -806,9 +806,12 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
   // ---- accounts ------------------------------------------------------------
 
   const ssoConfig = () => oidc.config();
+  const ssoProviders = [oidc, google];
+  const ssoOn = () => ssoProviders.filter((p) => p.enabled());
+  const providerOf = (id) => (id === 'google' ? google : oidc);
   // Password sign-in can be kept for admins only once SSO works, as a way in
-  // if the provider is down.
-  const passwordsFor = (role) => !oidc.enabled() || ssoConfig().passwordLogin || role === 'admin';
+  // if the provider is down. (The setting is kept with the generic SSO's.)
+  const passwordsFor = (role) => !ssoOn().length || ssoConfig().passwordLogin || role === 'admin';
 
   const activeAdmins = (except) => store.listUsers().filter((u) => u.role === 'admin' && u.active && u.id !== except).length;
   // Standalone, someone must be able to get into Settings. Under Home
@@ -827,6 +830,8 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
     password: Boolean(who.user.passwordHash),
     sso: Boolean(who.user.oidcSub),
     ssoName: who.user.oidcSub ? who.user.oidcName || '' : '',
+    google: Boolean(who.user.googleSub),
+    googleName: who.user.googleSub ? who.user.googleName || '' : '',
   });
 
   const normalizeScope = (v, base = {}) => {
@@ -877,50 +882,66 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
   const ssoLabel = (claims) => [claims.email, claims.preferred_username, claims.upn, claims.name]
     .find((x) => typeof x === 'string' && x.trim())?.trim().slice(0, 200) ?? '';
 
+  // What the sign-in page says when no usable account goes with an identity,
+  // whatever the reason: it never tells whether an account exists, is turned
+  // off, or has which address (and the message travels in the URL, so it
+  // would end up in proxy logs). The server log has the details.
+  const NOT_LINKED = 'No Upstream Kuma account goes with that sign-in. If you have one, sign in another way and link it in Settings → Account, or ask an admin.';
+
   // An SSO sign-in's account: the one linked to this subject, else the one
-  // with its (verified) email address, linked from now on, else a new viewer
-  // if accounts are created on first sign-in. Each is logged, with how it
-  // was matched.
-  const ssoUser = (claims, issuer) => {
-    const c = ssoConfig();
+  // with its email address (as its email or its username) when the provider
+  // vouches for it (Google: Gmail and Workspace addresses only), linked from
+  // then on, else a new viewer if accounts are created on first sign-in.
+  // Each is logged, with how it was matched.
+  const ssoUser = (claims, issuer, provider) => {
+    const c = provider.config();
     const sub = `${issuer} ${claims.sub}`;
     const email = typeof claims.email === 'string' ? claims.email.trim().slice(0, 200) : '';
+    const trusted = Boolean(email) && provider.emailTrusted(claims);
     const label = ssoLabel(claims);
-    const said = `${label || 'someone'} (subject ${claims.sub})`;
-    let u = store.findUserBySub(sub);
+    const said = `${label || 'someone'} (${c.label}, subject ${claims.sub})`;
+    let u = store.findUserBySub(sub, provider.id);
     let how = 'already linked';
-    if (!u && email && claims.email_verified !== false) {
-      const hits = store.findUsersByEmail(email).filter((x) => !x.oidcSub);
+    let why = email ? ` or has the email ${email}` : ' and it sent no email';
+    if (!u && email && !trusted) why = ` (${email} isn't an address ${c.label} vouches for, so it can't find one: link it from Settings → Account)`;
+    if (!u && trusted) {
+      const hits = store.findUsersByEmail(email).filter((x) => !x[provider.sub]);
+      if (hits.length === 1 && !hits[0].active) {
+        log.warn(`SSO sign-in by ${said}: the account with its email, ${hits[0].username}, is turned off`);
+        throw new Error(NOT_LINKED);
+      }
       if (hits.length === 1) {
         u = hits[0];
         how = 'linked now by email';
-        store.updateUser(u.id, { oidcSub: sub });
+        store.updateUser(u.id, { [provider.sub]: sub });
+      } else if (hits.length > 1) {
+        why = ` (${hits.length} accounts have the email ${email}: link it from Settings → Account)`;
       }
     }
     if (!u) {
       if (!c.autoCreate) {
-        log.warn(`SSO sign-in by ${said}: no account is linked to it${email ? ` or has the email ${email}` : ' and it sent no email'}`);
-        throw new Error(`There's no Upstream Kuma account for ${email || claims.preferred_username || 'you'} yet. Ask an admin to add one${email ? ' with this email address' : ''}.`);
+        log.warn(`SSO sign-in by ${said}: no account is linked to it${why}`);
+        throw new Error(NOT_LINKED);
       }
       how = 'new account';
       const want = String(claims.preferred_username || email.split('@')[0] || 'user').replace(/[^\p{L}\p{N}._@+-]/gu, '').slice(0, 60) || 'user';
       let username = want;
       for (let i = 2; store.findUser(username); i++) username = `${want}-${i}`;
-      const id = store.createUser({ username, name: String(claims.name ?? '').slice(0, 100), email: EMAIL.test(email) ? email : '', role: 'viewer', oidcSub: sub, scope: {} });
+      const id = store.createUser({ username, name: String(claims.name ?? '').slice(0, 100), email: trusted && EMAIL.test(email) ? email : '', role: 'viewer', [provider.sub]: sub, scope: {} });
       u = store.getUser(id);
     }
     if (!u.active) {
       log.warn(`SSO sign-in by ${said}: its account ${u.username} is turned off`);
-      throw new Error('Your Upstream Kuma account is turned off.');
+      throw new Error(NOT_LINKED);
     }
     const patch = {};
-    if (label !== u.oidcName) patch.oidcName = label;
+    if (label !== u[provider.name]) patch[provider.name] = label;
     if (c.adminGroup) {
       const role = groupsOf(claims, c.groupsClaim).includes(c.adminGroup) ? 'admin' : 'viewer';
       if (role !== u.role && (role === 'admin' || auth.addon || activeAdmins(u.id))) patch.role = role;
     }
     if (!u.name && claims.name) patch.name = String(claims.name).slice(0, 100);
-    if (!u.email && EMAIL.test(email)) patch.email = email;
+    if (!u.email && trusted && EMAIL.test(email)) patch.email = email;
     if (Object.keys(patch).length) {
       store.updateUser(u.id, patch);
       engine.touch();
@@ -930,9 +951,28 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
     return u;
   };
 
+  // Linking an identity to the account signed in here (Settings → Account),
+  // for addresses that don't find the account by themselves. The callback
+  // must come back to the same session that started it.
+  const linkUser = (claims, issuer, provider, who, userId) => {
+    const c = provider.config();
+    if (who?.via !== 'session' || who.user.id !== userId) throw new Error('Sign in again, then link the account');
+    const sub = `${issuer} ${claims.sub}`;
+    const label = ssoLabel(claims);
+    const other = store.findUserBySub(sub, provider.id);
+    if (other && other.id !== userId) {
+      log.warn(`${who.user.username} tried to link ${label || claims.sub} (${c.label}), which is linked to ${other.username}`);
+      throw new Error(`That ${c.label} account is linked to another Upstream Kuma account. An admin can unlink it there.`);
+    }
+    store.updateUser(userId, { [provider.sub]: sub, [provider.name]: label });
+    engine.touch();
+    log.info(`${who.user.username} linked ${label || claims.sub} (${c.label}, subject ${claims.sub})`);
+  };
+
   // Where to go after signing in: a hash route of this app, nothing else.
   const safeNext = (v) => (typeof v === 'string' && /^#\/[\w\-./?=&%~]*$/.test(v) ? v : '');
   const toLogin = (message) => `../../../login.html?error=${encodeURIComponent(message)}`;
+  const toAccount = (query) => `../../../#/settings/account?${query}`;
 
   route('GET', '/api/auth/status', ({ who }) => {
     const c = ssoConfig();
@@ -941,13 +981,14 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
       signedIn: Boolean(who),
       addon: auth.addon,
       sso: oidc.enabled() ? { label: c.label || OIDC_DEFAULTS.label } : null,
-      password: !oidc.enabled() || c.passwordLogin,
+      google: google.enabled(),
+      password: !ssoOn().length || c.passwordLogin,
     };
   }, 'public');
 
   route('POST', '/api/auth/login', async ({ req, body }) => {
     const user = await auth.login(req, body.username, body.password);
-    if (!passwordsFor(user.role)) throw new HttpError(403, `Sign in with ${ssoConfig().label || 'single sign-on'} instead`);
+    if (!passwordsFor(user.role)) throw new HttpError(403, `Sign in with ${ssoOn().map((p) => p.config().label || 'single sign-on').join(' or ')} instead`);
     return json({ ok: true }, { 'Set-Cookie': auth.startSession(user, req) });
   }, 'public');
 
@@ -996,7 +1037,7 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
   };
 
   route('POST', '/api/auth/oidc/handoff', ({ req }) => {
-    if (!oidc.enabled()) throw new HttpError(400, 'Single sign-on is not set up');
+    if (!ssoOn().length) throw new HttpError(400, 'Single sign-on is not set up');
     liveHandoff(null);
     if (handoffs.size > 500) handoffs.delete(handoffs.keys().next().value);
     const id = randomToken(16);
@@ -1049,34 +1090,48 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
     return json({ ok: true }, { 'Set-Cookie': clearCookie(CONFIRM_COOKIE, req) });
   }, 'public');
 
-  route('GET', '/api/auth/oidc/start', async ({ req, query }) => {
+  // `provider=google` for Google; `link=1` links the identity to the account
+  // signed in here instead of signing in.
+  route('GET', '/api/auth/oidc/start', async ({ req, query, who }) => {
+    const provider = providerOf(query.provider);
+    const link = query.link ? (who?.via === 'session' ? who.user.id : -1) : null;
     try {
-      const handoff = liveHandoff(query.handoff) ? query.handoff : null;
-      const { url, state } = await oidc.start(req, safeNext(query.next), handoff);
+      if (link === -1) throw new Error('Sign in first, then link the account');
+      const handoff = !link && liveHandoff(query.handoff) ? query.handoff : null;
+      const { url, state } = await provider.start(req, link ? '' : safeNext(query.next), { handoff, link });
       return redirect(url, { 'Set-Cookie': cookie(STATE_COOKIE, state, { req, maxAge: 600000 }) });
     } catch (err) {
-      return redirect(toLogin(err.message));
+      return redirect(link ? toAccount(`link-error=${encodeURIComponent(err.message)}`) : toLogin(err.message));
     }
   }, 'public');
 
-  route('GET', '/api/auth/oidc/callback', async ({ req, query }) => {
+  route('GET', '/api/auth/oidc/callback', async ({ req, query, who }) => {
     const clear = clearCookie(STATE_COOKIE, req);
+    // the provider whose sign-in this is (a stale state fails in either)
+    const provider = ssoProviders.find((p) => p.owns(query.state)) ?? oidc;
+    let linking = null;
     try {
-      const { claims, issuer, next, handoff } = await oidc.finish({
+      const { claims, issuer, next, handoff, link } = await provider.finish({
         code: query.code,
         state: query.state,
         cookieState: parseCookies(req.headers?.cookie)[STATE_COOKIE],
         error: query.error,
         errorDescription: query.error_description,
       }).catch((err) => {
-        log.warn(`SSO sign-in failed: ${err.message}`);
+        log.warn(`SSO sign-in (${provider.config().label}) failed: ${err.message}`);
+        linking = err.link;
         const x = liveHandoff(err.handoff);
         if (x) x.error = err.message;
         throw err;
       });
+      if (link) {
+        linking = link;
+        linkUser(claims, issuer, provider, who, link);
+        return redirect(toAccount(`linked=${provider.id}`), { 'Set-Cookie': clear });
+      }
       let user;
       try {
-        user = ssoUser(claims, issuer); // logs who it was
+        user = ssoUser(claims, issuer, provider); // logs who it was
       } catch (err) {
         const x = liveHandoff(handoff);
         if (x) x.error = err.message;
@@ -1097,11 +1152,25 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
       }
       return redirect(`../../../${next}`, { 'Set-Cookie': [auth.startSession(user, req), clear] });
     } catch (err) {
-      return redirect(toLogin(err.message), { 'Set-Cookie': clear });
+      return redirect(linking ? toAccount(`link-error=${encodeURIComponent(err.message)}`) : toLogin(err.message), { 'Set-Cookie': clear });
     }
   }, 'public');
 
   route('GET', '/api/me', ({ who }) => meOf(who), 'view');
+
+  // Unlinking one's own SSO identity, unless it's the only way in.
+  route('POST', '/api/me/unlink', ({ who, body }) => {
+    if (who.via !== 'session') throw new HttpError(400, 'This account has nothing linked');
+    const provider = providerOf(body.provider);
+    const other = provider === google ? oidc : google;
+    const u = who.user;
+    if (!u[provider.sub]) return { ok: true };
+    if (!u.passwordHash && !(u[other.sub] && other.enabled())) throw new HttpError(400, 'This is how you sign in, so it stays linked. Ask an admin to set you a password first.');
+    store.updateUser(u.id, { [provider.sub]: null, [provider.name]: '' });
+    log.info(`${u.username} unlinked ${provider.config().label}`);
+    engine.touch();
+    return { ok: true };
+  }, 'view');
 
   route('PUT', '/api/me/password', async ({ who, body }) => {
     if (who.via !== 'session' || !who.user.passwordHash) throw new HttpError(400, 'This account has no password to change');
@@ -1120,9 +1189,9 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
     if (body.password) {
       checkPassword(body.password);
       passwordHash = await hashPassword(body.password);
-    } else if (!oidc.enabled()) {
+    } else if (!ssoOn().length) {
       throw new HttpError(400, 'Give the account a password (single sign-on isn\'t set up)');
-    } else if (!data.email) {
+    } else if (!data.email && !EMAIL.test(data.username)) {
       throw new HttpError(400, 'An account without a password needs the email address it signs in with');
     }
     const id = store.createUser({ ...data, passwordHash });
@@ -1131,7 +1200,8 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
   });
 
   // `password` sets a new one, `removePassword` leaves SSO only, `unlinkSso`
-  // forgets the linked SSO identity (the next SSO sign-in links by email).
+  // and `unlinkGoogle` forget a linked identity (the next sign-in links by
+  // email again, where it can).
   route('PUT', '/api/users/:id', async ({ params, body, who }) => {
     const existing = userOr404(params.id);
     const data = normalizeUser(body, existing);
@@ -1141,10 +1211,11 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
       checkPassword(body.password);
       patch.passwordHash = await hashPassword(body.password);
     } else if (body.removePassword) {
-      if (!existing.oidcSub && !(oidc.enabled() && data.email)) throw new HttpError(400, 'Without a password this account could not sign in');
+      if (!existing.oidcSub && !existing.googleSub && !(ssoOn().length && (data.email || EMAIL.test(data.username)))) throw new HttpError(400, 'Without a password this account could not sign in');
       patch.passwordHash = null;
     }
     if (body.unlinkSso) Object.assign(patch, { oidcSub: null, oidcName: '' });
+    if (body.unlinkGoogle) Object.assign(patch, { googleSub: null, googleName: '' });
     store.updateUser(existing.id, patch);
     // Signed-in sessions end when what they were allowed to do changes.
     if (patch.passwordHash !== undefined || data.role !== existing.role || !data.active) {
@@ -1205,6 +1276,45 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
     }
     store.setSetting('oidc', next);
     return ssoView(req);
+  });
+
+  // Whether everyone may still use a password once single sign-on is on
+  // (otherwise admins only). Stored with the generic SSO's settings.
+  route('PUT', '/api/sso/passwords', ({ body }) => {
+    store.setSetting('oidc', { ...store.getSetting('oidc', {}), passwordLogin: body.everyone !== false });
+    return { everyone: ssoConfig().passwordLogin };
+  });
+
+  // ---- sign in with Google ------------------------------------------------------
+
+  const googleView = (req) => {
+    const { enabled, clientId, clientSecret, selectAccount, publicUrl } = google.config();
+    return { enabled, clientId, selectAccount, hasSecret: Boolean(clientSecret), addon: auth.addon, publicUrl, redirectUri: publicUrl || !auth.addon ? google.redirectUri(req) : null, callbackPath: CALLBACK_PATH };
+  };
+
+  route('GET', '/api/google', ({ req }) => googleView(req));
+
+  // As /api/sso: a blank secret keeps the saved one, `clearSecret` removes it.
+  route('PUT', '/api/google', async ({ req, body }) => {
+    const old = { ...GOOGLE_DEFAULTS, ...store.getSetting('google', {}) };
+    const next = {
+      enabled: Boolean(body.enabled ?? old.enabled),
+      clientId: String(body.clientId ?? old.clientId ?? '').trim().slice(0, 500),
+      clientSecret: body.clearSecret ? '' : (body.clientSecret ? String(body.clientSecret).trim().slice(0, 2000) : old.clientSecret),
+      selectAccount: Boolean(body.selectAccount ?? old.selectAccount),
+    };
+    if (next.clientId && !/\.apps\.googleusercontent\.com$/.test(next.clientId)) throw new HttpError(400, 'A Google client ID ends in .apps.googleusercontent.com');
+    if (next.enabled) {
+      if (!next.clientId || !next.clientSecret) throw new HttpError(400, 'Sign in with Google needs the client ID and client secret of an OAuth client in Google Cloud');
+      if (auth.addon && !google.config().publicUrl) throw new HttpError(400, 'Under Home Assistant, set the public address first (Settings → General), so Google can send people back to it');
+      try {
+        await google.discover(GOOGLE_ISSUER, { fresh: true });
+      } catch (err) {
+        throw new HttpError(400, err.message);
+      }
+    }
+    store.setSetting('google', next);
+    return googleView(req);
   });
 
   return async function handle(req, url, body) {

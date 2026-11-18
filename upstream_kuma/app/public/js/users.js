@@ -1,5 +1,6 @@
-// Settings → Users (admins: accounts, what each viewer sees, single sign-on)
-// and Settings → Account (everyone: who you are, your password, sign out).
+// Settings → Users (admins: accounts, what each viewer sees, single sign-on,
+// Google) and Settings → Account (everyone: who you are, your password,
+// linked sign-ins, sign out).
 import { api, h, fill, toast, confirmDialog, fmtAgo, fmtTime, session } from './util.js';
 import { tagPill } from './tags.js';
 import { tagScope } from './problems.js';
@@ -50,11 +51,16 @@ function scopeSummary(u, state) {
 // ---- Settings → Users --------------------------------------------------------------
 
 export async function renderUsers(box, { state }) {
-  const [users, sso] = await Promise.all([api('users'), api('sso')]);
+  const [users, sso, google] = await Promise.all([api('users'), api('sso'), api('google')]);
   let editing = null; // { id: user id | 'new', draft }
   const listBox = h('div', { class: 'card users-card' });
   const editBox = h('div');
   const ssoBox = h('div');
+  const googleBox = h('div');
+  const passwordsBox = h('div');
+  const anySso = () => sso.enabled || google.enabled;
+  // Whether a Google sign-in will find this account by its address.
+  const gmailish = (u) => /@(gmail|googlemail)\.com$/i.test(u.email || '') || /@(gmail|googlemail)\.com$/i.test(u.username || '');
 
   const reload = async () => {
     const fresh = await api('users');
@@ -75,9 +81,14 @@ export async function renderUsers(box, { state }) {
               u.name ? h('div', { class: 'muted small' }, u.username) : null),
             h('td', null, roleBadge(u.role), u.active ? null : h('span', { class: 'muted small' }, ' turned off')),
             h('td', null, scopeSummary(u, state)),
-            h('td', { class: 'small' }, [u.password ? 'Password' : null, u.sso ? 'SSO' : u.email && sso.enabled ? 'SSO (not yet)' : null].filter(Boolean).join(' · ') || '—',
-              // the identity the provider said it was, at its last sign-in
-              u.ssoName ? h('div', { class: 'muted user-sso-name', title: 'The single sign-on identity linked to this account' }, u.ssoName) : null),
+            h('td', { class: 'small' }, [
+              u.password ? 'Password' : null,
+              u.sso ? 'SSO' : u.email && sso.enabled ? 'SSO (not yet)' : null,
+              u.google ? 'Google' : google.enabled && gmailish(u) ? 'Google (not yet)' : null,
+            ].filter(Boolean).join(' · ') || '—',
+            // the identities the providers said they were, at the last sign-in
+            u.ssoName ? h('div', { class: 'muted user-sso-name', title: 'The single sign-on identity linked to this account' }, u.ssoName) : null,
+            u.googleName && u.googleName !== u.ssoName ? h('div', { class: 'muted user-sso-name', title: 'The Google account linked to this account' }, u.googleName) : null),
             h('td', { class: 'small muted nowrap', title: u.lastLogin ? fmtTime(u.lastLogin) : '' }, fmtAgo(u.lastLogin)),
             h('td', { class: 'nowrap' }, h('button', { class: 'btn small', onclick: () => edit(u) }, 'Edit')))))))
         : h('p', { class: 'muted' }, session.me.via === 'ingress'
@@ -158,7 +169,9 @@ export async function renderUsers(box, { state }) {
       h('div', { class: 'form-grid' },
         input('username', 'Username', { required: true, autocomplete: 'off', autocapitalize: 'none', spellcheck: false }),
         input('name', 'Name', { autocomplete: 'off' }),
-        input('email', 'Email', { type: 'email', autocomplete: 'off' }, sso.enabled ? 'Single sign-on finds the account by this address the first time.' : null)),
+        input('email', 'Email', { type: 'email', autocomplete: 'off' }, sso.enabled || google.enabled
+          ? `${sso.enabled ? 'Single sign-on' : 'Google'} finds the account by this address the first time${sso.enabled && google.enabled ? ' (Google only for Gmail and Workspace addresses)' : google.enabled ? ', if it is a Gmail or Workspace address' : ''}.`
+          : null)),
       h('section', null, h('h3', null, 'Role'), role),
       h('section', null, h('h3', null, 'Sees'), scopeBox,
         d.role === 'viewer' ? h('p', { class: 'help' }, 'Like the tag filter: the monitors with these tags, and everything upstream of them, so a viewer can tell when the cause is further up. Viewers can filter by any tag those monitors carry.') : null),
@@ -166,25 +179,15 @@ export async function renderUsers(box, { state }) {
         h('div', { class: 'field' },
           h('label', { for: 'u-password' }, isNew ? 'Password' : original.password ? 'New password' : 'Password'),
           password,
-          h('small', null, sso.enabled ? 'At least 8 characters. Leave it out for single sign-on only.' : 'At least 8 characters.')),
-        !isNew && original.password && (original.sso || (sso.enabled && d.email))
+          h('small', null, anySso() ? 'At least 8 characters. Leave it out for single sign-on only.' : 'At least 8 characters.')),
+        !isNew && original.password && (original.sso || original.google || (anySso() && d.email))
           ? h('label', { class: 'check' }, removePw, ' No password: single sign-on only') : null,
-        !isNew && original.sso ? h('p', { class: 'small' },
+        !isNew && original.sso ? unlinkLine(original, 'unlinkSso',
           original.ssoName ? ['Linked to the single sign-on identity ', h('strong', null, original.ssoName), '. '] : 'Linked to a single sign-on identity (named here after its next sign-in). ',
-          h('button', {
-            type: 'button',
-            class: 'linkish',
-            onclick: async () => {
-              try {
-                await api(`users/${original.id}`, { method: 'PUT', body: { unlinkSso: true } });
-                toast('Unlinked: the next SSO sign-in links by email again', 'success');
-                editing = null;
-                await reload();
-              } catch (err) {
-                toast(err.message, 'error');
-              }
-            },
-          }, 'Unlink')) : null,
+          'Unlinked: the next SSO sign-in links by email again') : null,
+        !isNew && original.google ? unlinkLine(original, 'unlinkGoogle',
+          original.googleName ? ['Linked to the Google account ', h('strong', null, original.googleName), '. '] : 'Linked to a Google account (named here after its next sign-in). ',
+          'Unlinked from Google') : null,
         h('label', { class: 'check' },
           h('input', { type: 'checkbox', checked: d.active, disabled: self, onchange: (e) => { d.active = e.target.checked; } }),
           ' Can sign in', self ? h('span', { class: 'muted small' }, ' (you)') : null)),
@@ -209,20 +212,80 @@ export async function renderUsers(box, { state }) {
     paintScope();
   };
 
+  const unlinkLine = (original, key, text, done) => h('p', { class: 'small' }, text,
+    h('button', {
+      type: 'button',
+      class: 'linkish',
+      onclick: async () => {
+        try {
+          await api(`users/${original.id}`, { method: 'PUT', body: { [key]: true } });
+          toast(done, 'success');
+          editing = null;
+          await reload();
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      },
+    }, 'Unlink'));
+
+  // once either is on: may everyone still use a password?
+  const paintPasswords = () => {
+    if (!anySso()) return fill(passwordsBox);
+    fill(passwordsBox, h('div', { class: 'card form' },
+      h('div', { class: 'card-head' }, h('h2', null, 'Passwords')),
+      h('label', { class: 'check' },
+        h('input', {
+          type: 'checkbox',
+          checked: sso.passwordLogin !== false,
+          onchange: async (e) => {
+            try {
+              const r = await api('sso/passwords', { method: 'PUT', body: { everyone: e.target.checked } });
+              sso.passwordLogin = r.everyone;
+              toast(r.everyone ? 'Everyone may sign in with a password' : 'Only admins may sign in with a password now', 'success');
+            } catch (err) {
+              e.target.checked = !e.target.checked;
+              toast(err.message, 'error');
+            }
+          },
+        }),
+        ' Allow password sign-in for everyone (otherwise admins only, in case single sign-on is down)')));
+  };
+  const saved = () => {
+    paint();
+    paintPasswords();
+  };
+
   paint();
-  ssoCard(ssoBox, sso);
+  ssoCard(ssoBox, sso, saved);
+  googleCard(googleBox, google, saved);
+  paintPasswords();
   fill(box, h('div', { class: 'stack' },
     h('div', { class: 'page-head' }, h('h1', null, 'Users'),
       h('p', { class: 'muted' }, 'Admins can do everything. Viewers see the monitors their scope picks by tag, and everything upstream of them, and can\'t change anything.',
         session.me.via === 'ingress' ? ' Home Assistant users are admins here, through the sidebar.' : '')),
     editBox,
     listBox,
-    ssoBox));
+    ssoBox,
+    googleBox,
+    passwordsBox));
+}
+
+// The address to give a provider: from the public URL, or this page's own
+// address (not under ingress: that is Home Assistant's).
+function redirectLine(uri) {
+  return [
+    h('span', { class: 'muted small' }, 'Redirect URI to give the provider:'),
+    uri ? [h('code', null, uri), h('button', {
+      type: 'button',
+      class: 'linkish',
+      onclick: () => navigator.clipboard?.writeText(uri).then(() => toast('Copied', 'success'), () => toast('Copy it by hand', 'error')),
+    }, 'Copy')] : h('span', { class: 'small scope-none' }, 'Fill in the public URL first'),
+  ];
 }
 
 // ---- single sign-on (OpenID Connect) -------------------------------------------------
 
-function ssoCard(box, cfg) {
+function ssoCard(box, cfg, onSaved) {
   const d = { ...cfg, clientSecret: '' };
   const text = (key, label, help, attrs = {}) => h('div', { class: 'field' },
     h('label', { for: `sso-${key}` }, label),
@@ -240,13 +303,7 @@ function ssoCard(box, cfg) {
     } catch {
       uri = null;
     }
-    fill(redirectBox,
-      h('span', { class: 'muted small' }, 'Redirect URI to give the provider:'),
-      uri ? [h('code', null, uri), h('button', {
-        type: 'button',
-        class: 'linkish',
-        onclick: () => navigator.clipboard?.writeText(uri).then(() => toast('Copied', 'success'), () => toast('Copy it by hand', 'error')),
-      }, 'Copy')] : h('span', { class: 'small scope-none' }, 'Fill in the public URL first'));
+    fill(redirectBox, redirectLine(uri));
   };
   paintRedirect();
   const save = async (e) => {
@@ -257,14 +314,15 @@ function ssoCard(box, cfg) {
       const saved = await api('sso', { method: 'PUT', body });
       Object.assign(cfg, saved);
       toast(saved.enabled ? 'Saved: single sign-on is on' : 'Saved', 'success');
-      ssoCard(box, cfg);
+      ssoCard(box, cfg, onSaved);
+      onSaved();
     } catch (err) {
       toast(err.message, 'error');
     }
   };
   fill(box, h('form', { class: 'card form sso-card', onsubmit: save },
     h('div', { class: 'card-head' }, h('h2', null, 'Single sign-on'), h('span', { class: `badge ${cfg.enabled ? 'up' : 'paused'}` }, cfg.enabled ? 'On' : 'Off')),
-    h('p', { class: 'muted' }, 'Sign in with an OpenID Connect provider (Authentik, Authelia, Keycloak, Google, Microsoft Entra, …). Make a confidential client there with the redirect URI below.'),
+    h('p', { class: 'muted' }, 'Sign in with an OpenID Connect provider (Authentik, Authelia, Keycloak, Microsoft Entra, …). Make a confidential client there with the redirect URI below. Google has a card of its own, below.'),
     check('enabled', 'Offer single sign-on on the sign-in page'),
     h('div', { class: 'form-grid' },
       text('issuer', 'Issuer URL', 'Its discovery document is at <issuer>/.well-known/openid-configuration.', { placeholder: 'https://auth.example.com/application/o/upstream-kuma' }),
@@ -280,17 +338,106 @@ function ssoCard(box, cfg) {
       h('div', { class: 'form-grid' },
         text('adminGroup', 'Admin group', 'Optional. Members of this group are admins, everyone else a viewer, set at every sign-in.', { placeholder: 'upstream-kuma-admins' }),
         text('groupsClaim', 'Groups claim', 'Where the provider lists groups.', { placeholder: 'groups' })),
-      check('passwordLogin', 'Allow password sign-in for everyone (otherwise admins only, in case the provider is down)'),
       check('selectAccount', 'Ask which account every time (the provider shows its account picker instead of signing in whoever is already signed in there)')),
     h('div', { class: 'form-actions' }, h('button', { class: 'btn primary', type: 'submit' }, 'Save'))));
+}
+
+// ---- sign in with Google -------------------------------------------------------------
+
+function googleCard(box, cfg, onSaved) {
+  const d = { enabled: cfg.enabled, clientId: cfg.clientId, clientSecret: '', selectAccount: cfg.selectAccount };
+  const text = (key, label, help, attrs = {}) => h('div', { class: 'field' },
+    h('label', { for: `g-${key}` }, label),
+    h('input', { id: `g-${key}`, value: d[key] ?? '', oninput: (e) => { d[key] = e.target.value; }, autocomplete: 'off', spellcheck: false, ...attrs }),
+    help ? h('small', null, help) : null);
+  const check = (key, label) => h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: d[key], onchange: (e) => { d[key] = e.target.checked; } }), ` ${label}`);
+  const uri = cfg.redirectUri;
+  // Google takes http:// only for localhost
+  const insecure = uri && /^http:/.test(uri) && !/^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(uri);
+  const save = async (e) => {
+    e.preventDefault();
+    try {
+      const body = { ...d };
+      if (!body.clientSecret) delete body.clientSecret;
+      const saved = await api('google', { method: 'PUT', body });
+      Object.assign(cfg, saved);
+      toast(saved.enabled ? 'Saved: Sign in with Google is on' : 'Saved', 'success');
+      googleCard(box, cfg, onSaved);
+      onSaved();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  };
+  fill(box, h('form', { class: 'card form sso-card', onsubmit: save },
+    h('div', { class: 'card-head' }, h('h2', null, 'Sign in with Google'), h('span', { class: `badge ${cfg.enabled ? 'up' : 'paused'}` }, cfg.enabled ? 'On' : 'Off')),
+    h('p', { class: 'muted' }, 'In the Google Cloud console, under Google Auth Platform → Clients, create an OAuth client of type “Web application” with the redirect URI below, and copy its client ID and secret here.'),
+    check('enabled', 'Offer “Sign in with Google” on the sign-in page'),
+    h('div', { class: 'form-grid' },
+      text('clientId', 'Client ID', null, { placeholder: '1234567890-abc.apps.googleusercontent.com' }),
+      text('clientSecret', 'Client secret', cfg.hasSecret ? 'Saved. Leave blank to keep it.' : null, { type: 'password', placeholder: cfg.hasSecret ? '••••••••' : '' })),
+    h('div', { class: 'sso-redirect' }, uri ? redirectLine(uri) : [
+      h('span', { class: 'muted small' }, 'Redirect URI to give Google:'),
+      h('span', { class: 'small scope-none' }, 'Set the public address in Settings → General first'),
+    ]),
+    insecure ? h('p', { class: 'small scope-none' }, 'Google only accepts https:// redirect URIs (or http://localhost). Open Upstream Kuma at its https:// address, or set that as the public address in Settings → General.') : null,
+    h('section', null, h('h3', null, 'Accounts'),
+      h('p', { class: 'muted small' }, 'Nobody gets an account by having a Google account: a Google sign-in uses the account linked to it, or else the one whose email address (or username) is its address, linked from then on. That only goes for Gmail addresses and Google Workspace domains, which Google vouches for. A Google account made with any other address (say you@outlook.com) is linked by its owner, signed in another way, in Settings → Account.'),
+      check('selectAccount', 'Show Google’s account picker every time (rather than signing in whoever is signed in to Google there)')),
+    h('div', { class: 'form-actions' }, h('button', { class: 'btn primary', type: 'submit' }, 'Save'))));
+}
+
+// ---- linked sign-ins ------------------------------------------------------------------
+
+const STANDALONE = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+
+// The sign-ins (SSO, Google) that are on, and which of them this account is
+// linked to; each can be linked from here, or unlinked if it isn't the only
+// way in.
+function linkedCard(me, status, rerender) {
+  const rows = [
+    status.sso ? { id: 'oidc', label: status.sso.label, linked: me.sso, name: me.ssoName } : null,
+    status.google ? { id: 'google', label: 'Google', linked: me.google, name: me.googleName } : null,
+  ].filter(Boolean);
+  if (!rows.length) return null;
+  return h('div', { class: 'card' },
+    h('h3', null, 'Linked sign-ins'),
+    h('p', { class: 'muted small' }, 'Link an account to sign in with it, here or in the app.'),
+    h('div', { class: 'linked-list' }, rows.map((r) => h('div', { class: 'linked-row' },
+      h('div', null, h('b', null, r.label),
+        h('div', { class: 'muted small' }, r.linked ? `Linked${r.name ? `: ${r.name}` : ''}` : 'Not linked')),
+      r.linked
+        ? h('button', {
+          class: 'btn small ghost',
+          onclick: async () => {
+            try {
+              await api('me/unlink', { method: 'POST', body: { provider: r.id } });
+              Object.assign(session.me, await api('me'));
+              toast(`Unlinked ${r.label}`, 'success');
+              rerender();
+            } catch (err) {
+              toast(err.message, 'error');
+            }
+          },
+        }, 'Unlink')
+        : STANDALONE
+          ? h('span', { class: 'muted small' }, 'Link it in a browser')
+          : h('a', { class: 'btn small', href: `api/auth/oidc/start?provider=${r.id}&link=1` }, `Link ${r.label}`)))));
 }
 
 // ---- Settings → Account -----------------------------------------------------------------
 
 export async function renderAccount(box, { state }) {
+  // back from linking (api.js redirects here with the outcome)
+  const back = new URLSearchParams(location.hash.split('?')[1] ?? '');
+  if (back.has('linked') || back.has('link-error')) {
+    history.replaceState(null, '', '#/settings/account');
+    if (back.has('linked')) toast(`Linked your ${back.get('linked') === 'google' ? 'Google' : 'single sign-on'} account`, 'success');
+    else toast(back.get('link-error'), 'error');
+  }
   const me = session.me;
+  const status = me.via === 'session' ? await api('auth/status').catch(() => ({})) : {};
   const how = { ingress: 'Signed in through Home Assistant.', open: 'Sign-in is turned off (AUTH=off): everyone who can reach Upstream Kuma is an admin.' }[me.via]
-    ?? `Signed in with ${me.sso && !me.password ? 'single sign-on' : me.sso ? 'a password or single sign-on' : 'a password'}${me.ssoName ? ` (as ${me.ssoName})` : ''}.`;
+    ?? `Signs in with ${[me.password ? 'a password' : null, me.sso ? status.sso?.label || 'single sign-on' : null, me.google ? 'Google' : null].filter(Boolean).join(' or ') || 'nothing yet'}.`;
   const cards = [h('div', { class: 'card' },
     h('div', { class: 'card-head' }, h('h2', null, me.name || me.username), roleBadge(me.role)),
     me.name ? h('p', { class: 'muted small' }, me.username) : null,
@@ -303,6 +450,7 @@ export async function renderAccount(box, { state }) {
         location.replace('login.html');
       },
     }, 'Sign out')) : null)];
+  if (me.via === 'session') cards.push(linkedCard(me, status, () => renderAccount(box, { state })));
   if (me.via === 'session' && me.password) {
     const cur = h('input', { id: 'a-cur', type: 'password', autocomplete: 'current-password', required: true });
     const next = h('input', { id: 'a-new', type: 'password', autocomplete: 'new-password', required: true, minLength: 8 });

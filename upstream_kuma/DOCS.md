@@ -77,7 +77,7 @@ On a phone (or any window up to 700px wide), the page changes shape so Flows get
 
 ## Settings
 
-The **Settings** page has sections, listed on the left (on a phone, as tabs along the top): **General** (how long to keep heartbeat history, the public address that links in alerts point to, and the version), **Notifications** (rules, channels and problem definitions), **Tags**, **Users** (accounts, what viewers see, and single sign-on), **Import & export** (monitors as a CSV file), **MIB library** and **Account** (your own password, and signing out). Keeping them here, away from the monitor list, means tags and notifications aren't changed by accident.
+The **Settings** page has sections, listed on the left (on a phone, as tabs along the top): **General** (how long to keep heartbeat history, the public address that links in alerts point to, and the version), **Notifications** (rules, channels and problem definitions), **Tags**, **Users** (accounts, what viewers see, single sign-on and Google), **Import & export** (monitors as a CSV file), **MIB library** and **Account** (your own password, linked sign-ins, and signing out). Keeping them here, away from the monitor list, means tags and notifications aren't changed by accident.
 
 ## Tags
 
@@ -219,18 +219,34 @@ Changing someone's password, role or turning their account off signs them out ev
 
 ### Single sign-on (OpenID Connect)
 
-Under **Settings → Users → Single sign-on**, connect a provider such as Authentik, Authelia, Keycloak, Google or Microsoft Entra:
+Under **Settings → Users → Single sign-on**, connect a provider such as Authentik, Authelia, Keycloak or Microsoft Entra (Google has a card of its own, below):
 
 1. At the provider, make an OpenID Connect client (confidential, authorization code flow) with the **redirect URI** shown on the page. Under Home Assistant, fill in the **Public URL** first (the address people open Upstream Kuma at), since the sidebar's address is Home Assistant's.
 2. Enter the **issuer URL** (its discovery document is at `<issuer>/.well-known/openid-configuration`), the client ID and secret, and a label for the button, and turn it on. Saving checks that the provider answers.
 
-The sign-in page then has a **Sign in with …** button. Someone signing in that way gets the account linked to their identity, or the one with their (verified) email address, which is linked from then on. Anyone else is turned away, unless **Create an account on first sign-in** is on: then they get a viewer account that sees nothing until you give it a scope. With an **admin group**, members of that group (in the provider's `groups` claim, or another you name) are admins and everyone else a viewer, set at every sign-in. Turn off **Allow password sign-in for everyone** to make everyone use single sign-on; admins can still use a password, in case the provider is down.
+The sign-in page then has a **Sign in with …** button. Someone signing in that way gets the account linked to their identity, or the one with their (verified) email address as its email or its username, which is linked from then on. Anyone else is turned away, unless **Create an account on first sign-in** is on: then they get a viewer account that sees nothing until you give it a scope. With an **admin group**, members of that group (in the provider's `groups` claim, or another you name) are admins and everyone else a viewer, set at every sign-in. Once single sign-on or Google is on, turn off **Allow password sign-in for everyone** (in the **Passwords** card) to make everyone use it; admins can still use a password, in case the provider is down.
+
+When a sign-in finds no account, or the account is turned off, the sign-in page says only that no account goes with that sign-in: never which accounts exist or which address it tried, since anyone can reach that page and the message travels in the address bar (and so into proxy logs). The reason is in the add-on's log.
 
 Once an identity is linked to an account, the link wins over the email address. Under **Signs in with**, the Users page shows the identity each account is linked to (its email address, or its username, as the provider gave it at the last sign-in); if one is linked to the wrong account, **Unlink** it in that account's editor and the next sign-in matches by email again. The add-on's log has a line for every SSO sign-in: who the provider said it was, which account that became, and whether by an existing link, by email, or as a new account.
 
 **From a home-screen app**, the sign-in opens in a window of its own (on an iPhone, the browser view iOS shows for other sites) while the app waits; once you're in, the app signs you in and that window can be closed. On an iPhone that window keeps its own cookies, so it first asks you to confirm, showing a 4-digit code the app shows too: only continue if you started the sign-in from the app yourself. A link from someone else that opens this page would otherwise sign *their* app in as you.
 
-The provider may sign in whoever is already signed in there without asking, which makes switching between two accounts awkward. **Ask which account every time** makes it show its account picker instead (`prompt=select_account`, which Microsoft Entra and Google support).
+### Sign in with Google
+
+Under **Settings → Users → Sign in with Google**:
+
+1. In the [Google Cloud console](https://console.cloud.google.com/), under **Google Auth Platform → Clients**, create an OAuth client of type **Web application**, with the **redirect URI** shown on the card. Google only takes `https://` addresses (or `http://localhost`), so open Upstream Kuma at its https address, or set that as the public address in **Settings → General** (under Home Assistant you must). If the consent screen is new, set its audience to **External** so personal Gmail accounts can use it.
+2. Copy the client ID and secret into the card and turn it on.
+
+The sign-in page then has a **Sign in with Google** button, next to your other single sign-on if you have one. Nobody gets an account just by having a Google account; a Google sign-in uses:
+
+- the account already linked to that Google account, else
+- the account whose email address (or username) is the Google account's address, **only for Gmail addresses and Google Workspace domains**, linked from then on. Google owns those addresses, so it can vouch for them.
+
+A Google account can also be made with any other address (say you@outlook.com). Google checked that address once, but doesn't own it, and advises against trusting it to identify someone, so it never finds an account by itself. Its owner links it instead: signed in another way (a password, or your other single sign-on), open **Settings → Account → Linked sign-ins** and choose **Link Google**. That works for any Google account, and also links one whose address isn't on the account. (Linking happens in a browser, not the home-screen app.) A Google link is separate from the other single sign-on's, so an account can have both; **Unlink** is on the account page (when you have another way in) and in the account's editor on the Users page.
+
+The provider may sign in whoever is already signed in there without asking, which makes switching between two accounts awkward. **Ask which account every time** makes it show its account picker instead (`prompt=select_account`, which Microsoft Entra and Google support). For Google it's on by default (**Show Google's account picker every time**).
 
 ## Import and export (CSV)
 

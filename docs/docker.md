@@ -156,7 +156,7 @@ If you build it yourself, run `git pull` (for a clone), then `docker compose bui
 
 ## Security
 
-Upstream Kuma asks everyone to **sign in**. The first time you open it, it asks you to create the admin account; until you do, whoever opens it first can, so do it straight away. Add accounts for other people under **Settings → Users**: admins can do everything, viewers see only the monitors their tags pick (and what is upstream of those) and change nothing. You can also sign in with an OpenID Connect provider (Authentik, Authelia, Keycloak, …); see *Users and sign-in* in [DOCS.md](../upstream_kuma/DOCS.md#users-and-sign-in).
+Upstream Kuma asks everyone to **sign in**. The first time you open it, it asks you to create the admin account; until you do, whoever opens it first can, so do it straight away. Add accounts for other people under **Settings → Users**: admins can do everything, viewers see only the monitors their tags pick (and what is upstream of those) and change nothing. You can also sign in with Google or an OpenID Connect provider (Authentik, Authelia, Keycloak, …); see *Users and sign-in* in [DOCS.md](../upstream_kuma/DOCS.md#users-and-sign-in).
 
 - **Reachable from the internet:** use HTTPS (a reverse proxy such as Caddy below), so passwords and the session cookie aren't sent in the clear. The proxy should pass `X-Forwarded-Proto`, which makes the cookie HTTPS-only.
 - **Push monitors** need no sign-in. Services call `/api/push/<token>`, and the token in the URL acts as the password.

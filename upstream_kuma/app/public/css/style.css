@@ -1442,8 +1442,14 @@ html.login-html { height: 100%; overflow: hidden; background: var(--bg); }
 .login-card { display: flex; flex-direction: column; gap: 14px; padding: 22px; background: var(--panel-solid); }
 .login-card h1 { font-size: 1.25rem; }
 .login-card .btn.primary, .login-submit { justify-content: center; padding-block: 10px; }
-.login-sso { text-align: center; }
-.login-or { display: flex; align-items: center; gap: 10px; color: var(--faint); font-size: 0.8rem; margin: 4px 0 10px; }
+.login-sso { text-align: center; justify-content: center; padding-block: 10px; }
+.login-google, .login-google:hover { background: #fff; color: #1f1f1f; border-color: #747775; gap: 10px; font-weight: 500; }
+.login-google:hover { background: #f2f2f2; }
+.linked-list { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.linked-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid var(--border); }
+.linked-row b { font-weight: 600; }
+.google-mark { width: 18px; height: 18px; flex: none; }
+.login-or { display: flex; align-items: center; gap: 10px; color: var(--faint); font-size: 0.8rem; margin: 0; }
 .login-or::before, .login-or::after { content: ''; flex: 1; border-top: 1px solid var(--border); }
 .login-error { color: #fecaca; background: rgba(248, 113, 113, 0.1); border: 1px solid rgba(248, 113, 113, 0.45); border-radius: 10px; padding: 8px 12px; margin: 0; }
 .login-admin { align-self: center; font-size: 0.82rem; }

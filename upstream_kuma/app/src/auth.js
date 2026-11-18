@@ -82,6 +82,8 @@ export const publicUser = (u) => u && ({
   password: Boolean(u.passwordHash),
   sso: Boolean(u.oidcSub),
   ssoName: u.oidcSub ? u.oidcName || '' : '',
+  google: Boolean(u.googleSub),
+  googleName: u.googleSub ? u.googleName || '' : '',
   createdAt: u.createdAt,
   lastLogin: u.lastLogin,
 });

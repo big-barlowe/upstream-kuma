@@ -15,7 +15,8 @@ function setup({ addon = false, fetch } = {}) {
   engine.reload();
   const auth = new Auth({ store, addon, ingressIp: '172.30.32.2' });
   const oidc = new Oidc({ store, fetch });
-  const handle = createApi({ store, engine, icons, auth, oidc });
+  const google = new Oidc({ store, fetch, id: 'google' });
+  const handle = createApi({ store, engine, icons, auth, oidc, google });
   // A browser: keeps the cookies it is given.
   const browser = (ip = '10.0.0.9') => {
     const jar = new Map();
@@ -35,7 +36,7 @@ function setup({ addon = false, fetch } = {}) {
     };
     return { call, jar };
   };
-  return { store, engine, auth, oidc, handle, browser };
+  return { store, engine, auth, oidc, google, handle, browser };
 }
 
 const mon = (store, name, parents = [], tags = []) => {
@@ -63,7 +64,7 @@ test('passwords are salted scrypt hashes', async () => {
 test('a new install asks for the admin account, once', async () => {
   const t = setup();
   const b = t.browser();
-  assert.deepEqual(await b.call('GET', '/api/auth/status'), { setup: true, signedIn: false, addon: false, sso: null, password: true });
+  assert.deepEqual(await b.call('GET', '/api/auth/status'), { setup: true, signedIn: false, addon: false, sso: null, google: false, password: true });
   await assert.rejects(b.call('GET', '/api/state'), (e) => e.status === 401 && /Create the admin/.test(e.message));
   await assert.rejects(b.call('POST', '/api/auth/setup', { username: 'alex', password: 'short' }), /at least 8/);
   await b.call('POST', '/api/auth/setup', { username: 'alex', password: 'correct horse' });
@@ -217,7 +218,7 @@ test('accounts: the last admin stays, nobody deletes themselves', async () => {
 test('under Home Assistant, ingress is an admin and the direct port needs an account', async () => {
   const t = setup({ addon: true });
   const ingress = t.browser('172.30.32.2');
-  assert.deepEqual(await ingress.call('GET', '/api/me'), { id: 0, username: 'homeassistant', name: 'Home Assistant', email: '', role: 'admin', via: 'ingress', password: false, sso: false, ssoName: '' });
+  assert.deepEqual(await ingress.call('GET', '/api/me'), { id: 0, username: 'homeassistant', name: 'Home Assistant', email: '', role: 'admin', via: 'ingress', password: false, sso: false, ssoName: '', google: false, googleName: '' });
   const direct = t.browser('192.168.1.20');
   // no setup from the network: accounts are made in Settings, through ingress
   assert.equal((await direct.call('GET', '/api/auth/status')).setup, false);
@@ -233,8 +234,11 @@ test('under Home Assistant, ingress is an admin and the direct port needs an acc
 // ---- single sign-on against a fake provider ---------------------------------
 
 const ISSUER = 'https://idp.example';
+const DEFAULT_ISSUER = ISSUER;
 
-function fakeIdp() {
+// `issuer` is the provider's; `iss` what its ID tokens say (Google's say
+// either of two).
+function fakeIdp({ issuer: ISSUER = DEFAULT_ISSUER, iss = ISSUER } = {}) {
   const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
   const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'k1', use: 'sig', alg: 'RS256' };
   const idp = { codes: new Map(), claims: {}, tamper: false, requests: [] };
@@ -260,7 +264,7 @@ function fakeIdp() {
       const challenge = crypto.createHash('sha256').update(form.get('code_verifier')).digest('base64url');
       if (challenge !== c.challenge) return reply({ error: 'invalid_grant', error_description: 'PKCE' }, 400);
       const now = Math.floor(Date.now() / 1000);
-      return reply({ access_token: 'at', id_token: sign({ iss: ISSUER, aud: 'uk', exp: now + 300, iat: now, nonce: c.nonce, ...idp.claims }) });
+      return reply({ access_token: 'at', id_token: sign({ iss, aud: idp.aud ?? 'uk', exp: now + 300, iat: now, nonce: c.nonce, ...idp.claims }) });
     }
     if (u.pathname === '/userinfo') return reply({ sub: idp.claims.sub, groups: idp.claims.userinfoGroups ?? [] });
     return reply({}, 404);
@@ -308,7 +312,8 @@ test('SSO: settings, linking by email, creating accounts, the admin group', asyn
   // no account with that email yet
   idp.claims = { sub: 'u-1', email: 'kim@example.com', email_verified: true, name: 'Kim', preferred_username: 'kim' };
   let res = await ssoSignIn(t, idp, b);
-  assert.match(decodeURIComponent(res.location), /^\.\.\/\.\.\/\.\.\/login\.html\?error=There's no Upstream Kuma account for kim@example\.com/);
+  assert.match(decodeURIComponent(res.location), /^\.\.\/\.\.\/\.\.\/login\.html\?error=No Upstream Kuma account goes with that sign-in/);
+  assert.doesNotMatch(decodeURIComponent(res.location), /kim/); // nothing about who, or which accounts exist
 
   // an account with that email is linked on first sign-in
   const kim = await admin.call('POST', '/api/users', { username: 'kim', email: 'Kim@Example.com', scope: { all: true } });
@@ -488,5 +493,154 @@ test('SSO from a home-screen app: the sign-in window hands over, confirming when
   const h5 = await app5.call('POST', '/api/auth/oidc/handoff', {});
   idp.claims = { sub: 'u-5', email: 'nobody@example.com', email_verified: true };
   await signInWindow(t.browser(), h5.id);
-  assert.match((await app5.call('POST', '/api/auth/oidc/handoff/claim', {})).error, /no Upstream Kuma account/);
+  assert.match((await app5.call('POST', '/api/auth/oidc/handoff/claim', {})).error, /No Upstream Kuma account goes with/);
+});
+
+const GOOGLE = 'https://accounts.google.com';
+const GOOGLE_ID = '123-abc.apps.googleusercontent.com';
+
+// Both providers at once: the generic one and Google, told apart by host.
+function twoIdps() {
+  const idp = fakeIdp();
+  const g = fakeIdp({ issuer: GOOGLE, iss: 'accounts.google.com' });
+  g.aud = GOOGLE_ID;
+  const fetch = (url, init) => (new URL(url).host === 'accounts.google.com' ? g.fetch : idp.fetch)(url, init);
+  return { idp, g, fetch };
+}
+
+async function googleSignIn(g, browser, claims) {
+  g.claims = claims;
+  const start = await browser.call('GET', '/api/auth/oidc/start?provider=google');
+  const { code, state } = g.authorize(start.location);
+  return browser.call('GET', `/api/auth/oidc/callback?code=${code}&state=${state}`);
+}
+
+test('Google: settings, and which addresses find an account by themselves', async () => {
+  const { idp, g, fetch } = twoIdps();
+  const t = setup({ fetch });
+  const admin = await withAdmin(t);
+  await assert.rejects(admin.call('PUT', '/api/google', { clientId: 'uk' }), /apps\.googleusercontent\.com/);
+  await assert.rejects(admin.call('PUT', '/api/google', { enabled: true, clientId: GOOGLE_ID }), /client secret/);
+  const saved = await admin.call('PUT', '/api/google', { enabled: true, clientId: GOOGLE_ID, clientSecret: 'gsecret' });
+  assert.deepEqual([saved.enabled, saved.hasSecret, saved.clientSecret, saved.redirectUri], [true, true, undefined, 'http://uk.example/api/auth/oidc/callback']);
+  assert.deepEqual(await t.browser().call('GET', '/api/auth/status'), { setup: false, signedIn: false, addon: false, sso: null, google: true, password: true });
+
+  // the authorize URL: Google's, its account picker by default
+  const start = new URL((await t.browser().call('GET', '/api/auth/oidc/start?provider=google')).location);
+  assert.equal(start.origin, GOOGLE);
+  assert.deepEqual([start.searchParams.get('client_id'), start.searchParams.get('prompt'), start.searchParams.get('scope')], [GOOGLE_ID, 'select_account', 'openid email profile']);
+
+  const kim = await admin.call('POST', '/api/users', { username: 'kim', email: 'Kim@gmail.com', scope: { all: true } });
+  const pat = await admin.call('POST', '/api/users', { username: 'pat@gmail.com', scope: { all: true } });
+  const lee = await admin.call('POST', '/api/users', { username: 'lee', email: 'lee@corp.example' });
+  const sam = await admin.call('POST', '/api/users', { username: 'sam', email: 'sam@outlook.com', password: 'sam-password' });
+  const off = await admin.call('POST', '/api/users', { username: 'off', email: 'off@gmail.com', active: false });
+  const signIn = async (claims) => {
+    const b = t.browser();
+    const res = await googleSignIn(g, b, claims);
+    return { b, location: decodeURIComponent(res.location), me: await b.call('GET', '/api/me').catch(() => null) };
+  };
+  const refused = (r, address) => {
+    assert.equal(r.me, null);
+    assert.match(r.location, /^\.\.\/\.\.\/\.\.\/login\.html\?error=No Upstream Kuma account goes with that sign-in/);
+    if (address) assert.ok(!r.location.includes(address), r.location);
+  };
+
+  // Gmail, by the account's email or by its username
+  let r = await signIn({ sub: 'g-kim', email: 'kim@gmail.com', email_verified: true, name: 'Kim' });
+  assert.deepEqual([r.me.username, r.me.google, r.me.googleName, r.me.sso], ['kim', true, 'kim@gmail.com', false]);
+  assert.equal(t.store.getUser(kim.id).googleSub, `${GOOGLE} g-kim`);
+  assert.equal(t.store.getUser(kim.id).oidcSub, null);
+  assert.equal((await signIn({ sub: 'g-pat', email: 'pat@gmail.com', email_verified: true })).me.id, pat.id);
+  // and from then on by the link, whatever the address says
+  assert.equal((await signIn({ sub: 'g-kim', email: 'kim.new@gmail.com', email_verified: true })).me.id, kim.id);
+  // a Workspace domain: Google vouches for it (`hd`)
+  assert.equal((await signIn({ sub: 'g-lee', email: 'lee@corp.example', email_verified: true, hd: 'corp.example' })).me.id, lee.id);
+
+  // Not these: an address Google doesn't own, an hd that isn't the address's,
+  // an unverified Gmail, a turned-off account. The page says the same thing
+  // for each, without the address.
+  refused(await signIn({ sub: 'g-sam', email: 'sam@outlook.com', email_verified: true }), 'sam@outlook.com');
+  refused(await signIn({ sub: 'g-sam2', email: 'sam@outlook.com', email_verified: true, hd: 'corp.example' }), 'sam@outlook.com');
+  refused(await signIn({ sub: 'g-x', email: 'kim2@gmail.com', email_verified: false }));
+  refused(await signIn({ sub: 'g-off', email: 'off@gmail.com', email_verified: true }), 'off@gmail.com');
+  refused(await signIn({ sub: 'g-new', email: 'stranger@gmail.com', email_verified: true }), 'stranger');
+  assert.equal(t.store.getUser(sam.id).googleSub, null);
+  assert.equal(t.store.getUser(off.id).googleSub, null);
+  assert.equal(t.store.listUsers().length, 6); // nobody was made
+
+  // A token for another client is refused.
+  g.aud = 'someone-else.apps.googleusercontent.com';
+  assert.match((await signIn({ sub: 'g-kim', email: 'kim@gmail.com', email_verified: true })).location, /different client/);
+  g.aud = GOOGLE_ID;
+
+  // With passwords for admins only, viewers are told what to use.
+  await admin.call('PUT', '/api/sso/passwords', { everyone: false });
+  await assert.rejects(t.browser().call('POST', '/api/auth/login', { username: 'sam', password: 'sam-password' }), /Sign in with Google instead/);
+  await admin.call('PUT', '/api/sso', { enabled: true, issuer: ISSUER, clientId: 'uk' });
+  await assert.rejects(t.browser().call('POST', '/api/auth/login', { username: 'sam', password: 'sam-password' }), /Sign in with Single sign-on or Google instead/);
+  await admin.call('PUT', '/api/sso/passwords', { everyone: true });
+  assert.equal(t.oidc.config().passwordLogin, true);
+  void idp;
+});
+
+test('Google: an account links its own Google account, which stays apart from the SSO link', async () => {
+  const { idp, g, fetch } = twoIdps();
+  const t = setup({ fetch });
+  const admin = await withAdmin(t);
+  await admin.call('PUT', '/api/google', { enabled: true, clientId: GOOGLE_ID, clientSecret: 'gsecret' });
+  await admin.call('PUT', '/api/sso', { enabled: true, issuer: ISSUER, clientId: 'uk' });
+  const sam = await admin.call('POST', '/api/users', { username: 'sam', email: 'sam@outlook.com', password: 'sam-password' });
+  const kim = await admin.call('POST', '/api/users', { username: 'kim', email: 'kim@example.com' });
+  const link = async (b, claims, provider = g) => {
+    provider.claims = claims;
+    const start = await b.call('GET', `/api/auth/oidc/start?provider=${provider === g ? 'google' : 'oidc'}&link=1`);
+    if (!start.location.startsWith('http')) return decodeURIComponent(start.location);
+    const { code, state } = provider.authorize(start.location);
+    return decodeURIComponent((await b.call('GET', `/api/auth/oidc/callback?code=${code}&state=${state}`)).location);
+  };
+
+  // signed out, there's nothing to link to
+  assert.match(await link(t.browser(), { sub: 'g-sam', email: 'sam@outlook.com', email_verified: true }), /^\.\.\/\.\.\/\.\.\/#\/settings\/account\?link-error=Sign in first/);
+
+  const b = t.browser();
+  await b.call('POST', '/api/auth/login', { username: 'sam', password: 'sam-password' });
+  assert.equal(await link(b, { sub: 'g-sam', email: 'sam@outlook.com', email_verified: true }), '../../../#/settings/account?linked=google');
+  assert.deepEqual([(await b.call('GET', '/api/me')).google, (await b.call('GET', '/api/me')).googleName], [true, 'sam@outlook.com']);
+  // now the Google sign-in finds sam
+  const b2 = t.browser();
+  await googleSignIn(g, b2, { sub: 'g-sam', email: 'sam@outlook.com', email_verified: true });
+  assert.equal((await b2.call('GET', '/api/me')).username, 'sam');
+  // the generic provider's link is a separate one
+  assert.equal(await link(b, { sub: 'o-sam', email: 'sam@outlook.com' }, idp), '../../../#/settings/account?linked=oidc');
+  const u = t.store.getUser(sam.id);
+  assert.deepEqual([u.googleSub, u.oidcSub], [`${GOOGLE} g-sam`, `${ISSUER} o-sam`]);
+
+  // A Google account linked to someone else stays theirs.
+  const k = t.browser();
+  idp.claims = { sub: 'o-kim', email: 'kim@example.com' };
+  await ssoSignIn(t, idp, k);
+  assert.equal((await k.call('GET', '/api/me')).username, 'kim');
+  assert.match(await link(k, { sub: 'g-sam', email: 'sam@outlook.com', email_verified: true }), /link-error=That Google account is linked to another Upstream Kuma account/);
+  assert.equal(t.store.getUser(kim.id).googleSub, null);
+
+  // The callback must come back to the session that started it.
+  const start = await k.call('GET', '/api/auth/oidc/start?provider=google&link=1');
+  g.claims = { sub: 'g-kim', email: 'kim@outlook.com', email_verified: true };
+  const x = g.authorize(start.location);
+  k.jar.delete('uk_session');
+  assert.match(decodeURIComponent((await k.call('GET', `/api/auth/oidc/callback?code=${x.code}&state=${x.state}`)).location), /link-error=Sign in again/);
+  assert.equal(t.store.getUser(kim.id).googleSub, null);
+
+  // Unlinking your own: fine with another way in, refused if it's the only one.
+  await b.call('POST', '/api/me/unlink', { provider: 'google' });
+  assert.equal(t.store.getUser(sam.id).googleSub, null);
+  t.store.updateUser(kim.id, { oidcSub: null, googleSub: `${GOOGLE} g-kim` });
+  const k2 = t.browser();
+  await googleSignIn(g, k2, { sub: 'g-kim', email: 'kim@outlook.com', email_verified: true });
+  await assert.rejects(k2.call('POST', '/api/me/unlink', { provider: 'google' }), /stays linked/);
+  // an admin can, from the Users page
+  await admin.call('PUT', `/api/users/${kim.id}`, { unlinkGoogle: true });
+  assert.deepEqual([t.store.getUser(kim.id).googleSub, t.store.getUser(kim.id).googleName], [null, '']);
+  assert.equal((await admin.call('GET', '/api/users')).find((x2) => x2.id === kim.id).google, false);
 });

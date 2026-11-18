@@ -254,6 +254,13 @@ export const MIGRATIONS = [
   `
   CREATE INDEX alerts_monitor ON alerts(monitor_id, time);
   `,
+  // v14: an account's Google identity ("<issuer> <sub>") and who it is, kept
+  // apart from the other provider's, so one account can have both.
+  `
+  ALTER TABLE users ADD COLUMN google_sub TEXT;
+  ALTER TABLE users ADD COLUMN google_name TEXT NOT NULL DEFAULT '';
+  CREATE UNIQUE INDEX users_google_sub ON users(google_sub);
+  `,
 ];
 
 const TAG_COLS = 'id, name, color, icon, icon_updated_at AS iconV';
@@ -300,7 +307,9 @@ function rowToMonitor(r) {
   };
 }
 
-const USER_COLS = 'id, username, name, email, role, password, oidc_sub, oidc_name, scope, active, created_at, last_login';
+const USER_COLS = 'id, username, name, email, role, password, oidc_sub, oidc_name, google_sub, google_name, scope, active, created_at, last_login';
+// A provider's column for the identity linked to an account.
+const SUB_COL = { oidc: 'oidc_sub', google: 'google_sub' };
 
 function rowToUser(r) {
   return {
@@ -312,6 +321,8 @@ function rowToUser(r) {
     passwordHash: r.password ?? null,
     oidcSub: r.oidc_sub ?? null,
     oidcName: r.oidc_sub ? r.oidc_name : '',
+    googleSub: r.google_sub ?? null,
+    googleName: r.google_sub ? r.google_name : '',
     scope: { all: false, tagIds: [], tagMatch: 'any', tagExpr: '', ...JSON.parse(r.scope) },
     active: Boolean(r.active),
     createdAt: r.created_at,
@@ -847,13 +858,16 @@ export class Store {
     return r ? rowToUser(r) : null;
   }
 
-  findUserBySub(sub) {
-    const r = this.q(`SELECT ${USER_COLS} FROM users WHERE oidc_sub = ?`).get(sub);
+  // `provider`: 'oidc' or 'google'
+  findUserBySub(sub, provider = 'oidc') {
+    const r = this.q(`SELECT ${USER_COLS} FROM users WHERE ${SUB_COL[provider] ?? 'oidc_sub'} = ?`).get(sub);
     return r ? rowToUser(r) : null;
   }
 
+  // The accounts with this email address, or with it as their username.
   findUsersByEmail(email) {
-    return this.q(`SELECT ${USER_COLS} FROM users WHERE email = ? COLLATE NOCASE AND email != ''`).all(String(email)).map(rowToUser);
+    return this.q(`SELECT ${USER_COLS} FROM users WHERE (email = ?1 COLLATE NOCASE AND email != '') OR (username = ?1 COLLATE NOCASE AND username LIKE '%_@_%')`)
+      .all(String(email)).map(rowToUser);
   }
 
   countUsers() {
@@ -861,16 +875,16 @@ export class Store {
   }
 
   createUser(u) {
-    return Number(this.q(`INSERT INTO users (username, name, email, role, password, oidc_sub, oidc_name, scope, active, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    return Number(this.q(`INSERT INTO users (username, name, email, role, password, oidc_sub, oidc_name, google_sub, google_name, scope, active, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       u.username, u.name ?? '', u.email ?? '', u.role === 'admin' ? 'admin' : 'viewer', u.passwordHash ?? null,
-      u.oidcSub ?? null, u.oidcName ?? '', JSON.stringify(u.scope ?? {}), u.active === false ? 0 : 1, Date.now(),
+      u.oidcSub ?? null, u.oidcName ?? '', u.googleSub ?? null, u.googleName ?? '', JSON.stringify(u.scope ?? {}), u.active === false ? 0 : 1, Date.now(),
     ).lastInsertRowid);
   }
 
   // Only the fields given change.
   updateUser(id, u) {
-    const cols = { username: 'username', name: 'name', email: 'email', role: 'role', passwordHash: 'password', oidcSub: 'oidc_sub', oidcName: 'oidc_name', scope: 'scope', active: 'active', lastLogin: 'last_login' };
+    const cols = { username: 'username', name: 'name', email: 'email', role: 'role', passwordHash: 'password', oidcSub: 'oidc_sub', oidcName: 'oidc_name', googleSub: 'google_sub', googleName: 'google_name', scope: 'scope', active: 'active', lastLogin: 'last_login' };
     for (const [k, col] of Object.entries(cols)) {
       if (u[k] === undefined) continue;
       const v = k === 'scope' ? JSON.stringify(u[k]) : k === 'active' ? (u[k] ? 1 : 0) : u[k];

@@ -21,6 +21,28 @@ export const OIDC_DEFAULTS = {
   selectAccount: false,
 };
 
+// Sign in with Google: an OpenID provider with a fixed issuer, no groups,
+// and no accounts made on first sign-in (anyone has a Google account).
+export const GOOGLE_ISSUER = 'https://accounts.google.com';
+export const GOOGLE_DEFAULTS = {
+  enabled: false,
+  clientId: '',
+  clientSecret: '',
+  selectAccount: true,
+};
+// Google is the authority for these addresses: Gmail, and a Workspace
+// domain (the ID token's `hd`). A Google account can also be made with any
+// other address, which Google checked once but doesn't own, so that one
+// never finds an account by itself (Google's advice too).
+const GMAIL = /@(gmail|googlemail)\.com$/i;
+export const googleOwnsEmail = (claims) => {
+  const email = typeof claims.email === 'string' ? claims.email.trim() : '';
+  if (claims.email_verified !== true && claims.email_verified !== 'true') return false;
+  if (GMAIL.test(email)) return true;
+  const hd = typeof claims.hd === 'string' ? claims.hd.toLowerCase() : '';
+  return Boolean(hd) && email.toLowerCase().endsWith(`@${hd}`);
+};
+
 export const CALLBACK_PATH = 'api/auth/oidc/callback';
 export const STATE_COOKIE = 'uk_oidc';
 const PENDING_TTL = 10 * 60000;
@@ -71,10 +93,12 @@ export function verifyJwt(token, { keys, secret }) {
   return { header, claims: b64json(parts[1]) };
 }
 
+// `issuer` may be a list: Google's tokens say either of two.
 export function checkClaims(claims, { issuer, clientId, nonce, now = Date.now() }) {
   const skew = 120;
   const t = now / 1000;
-  if (claims.iss !== issuer) throw new Error(`The ID token is from "${claims.iss}", not "${issuer}"`);
+  const issuers = [issuer].flat();
+  if (!issuers.includes(claims.iss)) throw new Error(`The ID token is from "${claims.iss}", not "${issuers[0]}"`);
   const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
   if (!aud.includes(clientId)) throw new Error('The ID token is for a different client');
   if (aud.length > 1 && claims.azp && claims.azp !== clientId) throw new Error('The ID token is for a different client');
@@ -89,23 +113,55 @@ export const groupsOf = (claims, name) => {
   return Array.isArray(v) ? v.map(String) : typeof v === 'string' ? v.split(/[,\s]+/).filter(Boolean) : [];
 };
 
+// One provider: `id` 'oidc' (any OpenID provider, settings key `oidc`) or
+// 'google' (settings key `google`). Each account links one identity of each,
+// in `oidcSub`/`oidcName` and `googleSub`/`googleName`.
 export class Oidc {
   // `fetch` is injectable for tests.
-  constructor({ store, fetch = globalThis.fetch, now = Date.now }) {
+  constructor({ store, fetch = globalThis.fetch, now = Date.now, id = 'oidc' }) {
     this.store = store;
     this.fetch = fetch;
     this.now = now;
-    this.pending = new Map(); // state -> { nonce, verifier, redirectUri, next, handoff, at }
+    this.id = id;
+    this.sub = `${id}Sub`;
+    this.name = `${id}Name`;
+    this.pending = new Map(); // state -> { nonce, verifier, redirectUri, next, handoff, link, at }
     this.meta = null; // { issuer, at, doc, jwks }
   }
 
+  // Google's settings are filled out to look like a provider's: the generic
+  // one's public URL (else Settings → General's) makes its redirect URI too.
   config() {
-    return { ...OIDC_DEFAULTS, ...this.store.getSetting('oidc', {}) };
+    const generic = { ...OIDC_DEFAULTS, ...this.store.getSetting('oidc', {}) };
+    if (this.id !== 'google') return generic;
+    return {
+      ...OIDC_DEFAULTS,
+      ...GOOGLE_DEFAULTS,
+      ...this.store.getSetting('google', {}),
+      issuer: GOOGLE_ISSUER,
+      label: 'Google',
+      scopes: 'openid email profile',
+      publicUrl: generic.publicUrl || this.store.getSettings().publicUrl || '',
+      autoCreate: false,
+      adminGroup: '',
+    };
   }
 
   enabled() {
     const c = this.config();
     return c.enabled && Boolean(c.issuer && c.clientId);
+  }
+
+  // Whether the provider's word on this email address is enough to find the
+  // account with it.
+  emailTrusted(claims) {
+    if (this.id === 'google') return googleOwnsEmail(claims);
+    return claims.email_verified !== false && claims.email_verified !== 'false';
+  }
+
+  // Whether this sign-in (by its state) was started here.
+  owns(state) {
+    return typeof state === 'string' && this.pending.has(state);
   }
 
   async #json(url, init = {}) {
@@ -155,9 +211,11 @@ export class Oidc {
 
   // Begin a sign-in: the URL to send the browser to, and the state that
   // ties the callback to this browser (set as a cookie).
-  async start(req, next, handoff = null) {
+  // `link`: the signed-in account to link the identity to, instead of
+  // signing in.
+  async start(req, next, { handoff = null, link = null } = {}) {
     const c = this.config();
-    if (!this.enabled()) throw new HttpError(400, 'Single sign-on is not set up');
+    if (!this.enabled()) throw new HttpError(400, `${this.id === 'google' ? 'Sign in with Google' : 'Single sign-on'} is not set up`);
     const { doc } = await this.discover(c.issuer);
     const state = randomToken(24);
     const nonce = randomToken(24);
@@ -166,7 +224,7 @@ export class Oidc {
     const now = this.now();
     for (const [k, p] of this.pending) if (now - p.at > PENDING_TTL) this.pending.delete(k);
     if (this.pending.size > 1000) this.pending.delete(this.pending.keys().next().value);
-    this.pending.set(state, { nonce, verifier, redirectUri, next, handoff, at: now });
+    this.pending.set(state, { nonce, verifier, redirectUri, next, handoff, link, at: now });
     const url = new URL(doc.authorization_endpoint);
     const scopes = new Set(['openid', ...String(c.scopes || OIDC_DEFAULTS.scopes).split(/\s+/).filter(Boolean)]);
     for (const [k, v] of Object.entries({
@@ -187,11 +245,13 @@ export class Oidc {
 
   // Finish it: trade the code for tokens and return the verified claims
   // (merged with userinfo) and where to go next.
-  // A failure carries `handoff`, so a home-screen app waiting on it can say so.
+  // A failure carries `handoff`, so a home-screen app waiting on it can say
+  // so, and `link`, so a link goes back to the account page.
   async finish(args) {
     const p = args.state ? this.pending.get(args.state) : null;
     return this.#finish(args, p).catch((err) => {
       err.handoff = p?.handoff ?? null;
+      err.link = p?.link ?? null;
       throw err;
     });
   }
@@ -226,7 +286,8 @@ export class Oidc {
       verified = verifyJwt(tokens.id_token, { keys: meta.keys, secret: c.clientSecret });
     }
     const claims = verified.claims;
-    checkClaims(claims, { issuer: doc.issuer, clientId: c.clientId, nonce: p.nonce, now: this.now() });
+    const issuers = this.id === 'google' ? [doc.issuer, 'accounts.google.com'] : doc.issuer;
+    checkClaims(claims, { issuer: issuers, clientId: c.clientId, nonce: p.nonce, now: this.now() });
     let info = {};
     if (doc.userinfo_endpoint && tokens.access_token) {
       try {
@@ -236,6 +297,6 @@ export class Oidc {
         info = {}; // the ID token's claims will do
       }
     }
-    return { claims: { ...info, ...claims, [c.groupsClaim || 'groups']: claims[c.groupsClaim || 'groups'] ?? info[c.groupsClaim || 'groups'] }, issuer: doc.issuer, next: p.next, handoff: p.handoff };
+    return { claims: { ...info, ...claims, [c.groupsClaim || 'groups']: claims[c.groupsClaim || 'groups'] ?? info[c.groupsClaim || 'groups'] }, issuer: doc.issuer, next: p.next, handoff: p.handoff, link: p.link };
   }
 }
