@@ -1727,7 +1727,7 @@ const SETTINGS = [
   { id: 'users', admin: true, label: 'Users', note: 'Accounts, what they see, SSO', icon: 'M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20c.5-3.5 3-5.5 6.5-5.5s6 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 6.5M18 14.8c2 .7 3.2 2.5 3.5 5.2', render: (box) => renderUsers(box, { state }) },
   { id: 'import', admin: true, label: 'Import & export', note: 'Monitors as a CSV file', icon: 'M12 3v11M7.5 9.5 12 14l4.5-4.5M4 15v4.5h16V15', render: (box) => fill(box, h('div', { class: 'stack' }, h('div', { class: 'page-head' }, h('h1', null, 'Import & export')), csvCard())) },
   { id: 'mibs', admin: true, label: 'MIB library', note: 'Names for SNMP values', icon: 'M6 4h10.5A2.5 2.5 0 0 1 19 6.5V20H8.5A2.5 2.5 0 0 1 6 17.5zM6 17.5A2.5 2.5 0 0 1 8.5 15H19', render: (box) => fill(box, h('div', { class: 'stack' }, h('div', { class: 'page-head' }, h('h1', null, 'MIB library')), mibLibraryCard())) },
-  { id: 'account', label: 'Account', note: 'You, your password, sign out', icon: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4.5 20.5c.7-4 3.6-6.5 7.5-6.5s6.8 2.5 7.5 6.5', render: (box) => renderAccount(box, { state }) },
+  { id: 'account', label: 'Account', note: 'You, sign-ins, push notifications', icon: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4.5 20.5c.7-4 3.6-6.5 7.5-6.5s6.8 2.5 7.5 6.5', render: (box) => renderAccount(box, { state }) },
 ];
 const settingsHref = (id) => (id === 'general' ? '#/settings' : `#/settings/${id}`);
 const settingsIcon = (d) => svg('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' }, svg('path', { d }));
@@ -2010,6 +2010,14 @@ window.addEventListener('resize', () => {
 // Who is signed in decides what the page offers (a 401 goes to login.html).
 session.me = await api('me');
 document.body.classList.toggle('viewer', !session.admin);
+// Web push: keep the service worker registered (it shows pushes), and go
+// where a tapped notification points (sw.js posts it when the app is open).
+if (session.me.via === 'session' && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (typeof e.data?.open === 'string' && e.data.open.startsWith('#/')) location.hash = e.data.open;
+  });
+}
 if (!session.admin) for (const el of document.querySelectorAll('#tab-settings span, .nav [data-route="settings"]')) el.textContent = 'Account';
 await poll();
 route();

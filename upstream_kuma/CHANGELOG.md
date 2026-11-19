@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.22.0
+
+- **Push notifications to phones**, including the iPhone home-screen app (iOS 16.4 or later), Android and desktop browsers. Add a channel of the new type **Web push** and give it rules like any channel; then each phone signs itself up in **Settings → Account → Push notifications**, picking which push channels it wants. Tapping a notification opens the monitor in Flows, and a monitor's "back up" replaces its "down". A viewer's phones only hear about monitors the viewer can see. Needs Upstream Kuma at an https:// address (and, on an iPhone, the app added to the Home Screen).
+- A phone that's no longer subscribed is forgotten by itself; signing out on a phone stops its notifications.
+- Each Web push channel shows how many devices signed up to it, and its **Send test** goes to all of them.
+
 ## 0.21.0
 
 - **Sign in with Google.** A card of its own under **Settings → Users** (an OAuth client from Google Cloud: client ID and secret), and a **Sign in with Google** button on the sign-in page, next to your other single sign-on if you have one. A Google sign-in finds the account linked to it, or else the one whose email address or username is its address, but only for Gmail and Google Workspace addresses, which Google vouches for. Nobody gets an account just by having a Google account.

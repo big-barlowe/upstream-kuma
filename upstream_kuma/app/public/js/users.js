@@ -424,6 +424,148 @@ function linkedCard(me, status, rerender) {
           : h('a', { class: 'btn small', href: `api/auth/oidc/start?provider=${r.id}&link=1` }, `Link ${r.label}`)))));
 }
 
+// ---- push notifications on this device ------------------------------------------------
+//
+// A device signs itself up for the Web push channels it wants (api.js,
+// webpush.js); on an iPhone that only works in the app added to the Home
+// Screen. The list below it is the account's other devices.
+
+const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const PUSH_OK = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+
+function deviceName() {
+  const ua = navigator.userAgent;
+  const what = /iPhone/.test(ua) ? 'iPhone' : IOS ? 'iPad' : /Android/.test(ua) ? 'Android' : /Mac/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : 'Device';
+  const how = STANDALONE ? 'app' : /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : '';
+  return how ? `${what} (${how})` : what;
+}
+
+// a VAPID key (base64url) as the bytes subscribe() wants
+const keyBytes = (b64) => Uint8Array.from(atob(b64.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (b64.length % 4)) % 4)), (c) => c.charCodeAt(0));
+
+export async function pushSubscription() {
+  if (!PUSH_OK) return null;
+  const reg = await navigator.serviceWorker.getRegistration();
+  return reg ? reg.pushManager.getSubscription() : null;
+}
+
+function pushCard() {
+  const box = h('div', { class: 'card push-card' });
+  const paint = async () => {
+    let info;
+    let sub = null;
+    try {
+      [info, sub] = await Promise.all([api('webpush'), pushSubscription().catch(() => null)]);
+    } catch (err) {
+      return fill(box, h('h3', null, 'Push notifications'), h('p', { class: 'muted' }, err.message));
+    }
+    const names = new Map(info.channels.map((c) => [c.id, c.name]));
+    const mine = sub ? info.devices.find((d) => d.endpoint === sub.endpoint) : null;
+    const others = info.devices.filter((d) => d !== mine);
+    const picked = new Set(mine ? mine.channelIds : info.channels.filter((c) => c.active).map((c) => c.id));
+    const run = (fn) => async (e) => {
+      const btn = e?.currentTarget;
+      if (btn) btn.disabled = true;
+      try {
+        await fn();
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+      if (btn) btn.disabled = false;
+    };
+    const channelPicks = (onChange) => h('div', { class: 'push-channels' }, info.channels.map((c) => h('label', { class: 'check' },
+      h('input', {
+        type: 'checkbox',
+        checked: picked.has(c.id),
+        onchange: (e) => {
+          if (e.target.checked) picked.add(c.id);
+          else picked.delete(c.id);
+          onChange?.();
+        },
+      }),
+      ` ${c.name}`, c.active ? null : h('span', { class: 'muted small' }, ' (turned off)'))));
+    const nameInput = h('input', { id: 'push-name', value: mine?.name ?? deviceName(), autocomplete: 'off', maxLength: 60 });
+
+    let here;
+    if (!info.channels.length) {
+      here = h('p', { class: 'muted' }, session.admin
+        ? ['Add a channel of type ', h('b', null, 'Web push'), ' under ', h('a', { href: '#/settings/notifications' }, 'Settings → Notifications'), ', with rules for what it gets. Then turn notifications on here, on each phone.']
+        : 'There is no push channel yet. Ask an admin to add one.');
+    } else if (!PUSH_OK || !isSecureContext) {
+      here = h('p', { class: 'muted' }, IOS && !STANDALONE
+        ? 'On an iPhone or iPad, push notifications come to the app on the Home Screen: in Safari, tap Share → Add to Home Screen, open Upstream Kuma from there, and turn them on here.'
+        : !isSecureContext ? 'Push notifications need Upstream Kuma at an https:// address.' : 'This browser can’t receive push notifications.');
+    } else if (Notification.permission === 'denied') {
+      here = h('p', { class: 'muted' }, IOS
+        ? 'Notifications are turned off for Upstream Kuma on this device. Turn them on in the iPhone’s Settings → Notifications → Upstream Kuma, then come back.'
+        : 'Notifications are blocked for this site. Allow them in the browser’s site settings, then come back.');
+    } else if (mine) {
+      const save = run(async () => {
+        await api(`webpush/devices/${mine.id}`, { method: 'PUT', body: { name: nameInput.value, channelIds: [...picked] } });
+        toast('Saved', 'success');
+      });
+      nameInput.onchange = save;
+      here = [
+        h('p', null, 'This device gets push notifications from:'),
+        channelPicks(save),
+        h('div', { class: 'field' }, h('label', { for: 'push-name' }, 'This device’s name'), nameInput),
+        mine.lastError ? h('p', { class: 'small scope-none' }, `The last one didn’t arrive: ${mine.lastError}`) : null,
+        h('div', { class: 'form-actions' },
+          h('button', { class: 'btn', onclick: run(async () => {
+            await api(`webpush/devices/${mine.id}/test`, { method: 'POST' });
+            toast('Test sent: it should arrive in a moment', 'success');
+          }) }, 'Send a test'),
+          h('button', { class: 'btn ghost', onclick: run(async () => {
+            await api(`webpush/devices/${mine.id}`, { method: 'DELETE' });
+            await sub.unsubscribe().catch(() => {});
+            toast('Notifications are off on this device', 'success');
+            paint();
+          }) }, 'Turn off on this device')),
+      ];
+    } else {
+      here = [
+        h('p', null, 'Get alerts on this device from:'),
+        channelPicks(),
+        h('div', { class: 'field' }, h('label', { for: 'push-name' }, 'This device’s name'), nameInput),
+        h('div', { class: 'form-actions' },
+          h('button', { class: 'btn primary', onclick: run(async () => {
+            // asked straight from the tap: iOS allows nothing else
+            const answer = await Notification.requestPermission();
+            if (answer !== 'granted') {
+              paint();
+              throw new Error('Notifications weren’t allowed');
+            }
+            const reg = await navigator.serviceWorker.register('sw.js');
+            await navigator.serviceWorker.ready;
+            const s2 = await reg.pushManager.getSubscription()
+              ?? await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(info.publicKey) });
+            await api('webpush/devices', { method: 'POST', body: { subscription: s2.toJSON(), name: nameInput.value, channelIds: [...picked], origin: location.origin } });
+            toast('Notifications are on for this device', 'success');
+            paint();
+          }) }, 'Turn on notifications')),
+      ];
+    }
+    fill(box,
+      h('h3', null, 'Push notifications'),
+      here,
+      others.length ? h('div', { class: 'push-others' },
+        h('h4', null, 'Your other devices'),
+        h('div', { class: 'linked-list' }, others.map((d) => h('div', { class: 'linked-row' },
+          h('div', null, h('b', null, d.name),
+            h('div', { class: 'muted small' },
+              d.channelIds.map((id) => names.get(id)).filter(Boolean).join(', ') || 'No channels',
+              ' · ', d.lastOk ? `last one arrived ${fmtAgo(d.lastOk)}` : 'nothing sent yet'),
+            d.lastError ? h('div', { class: 'small scope-none' }, d.lastError) : null),
+          h('button', { class: 'btn small ghost', onclick: run(async () => {
+            await api(`webpush/devices/${d.id}`, { method: 'DELETE' });
+            toast(`Removed ${d.name}`, 'success');
+            paint();
+          }) }, 'Remove'))))) : null);
+  };
+  paint();
+  return box;
+}
+
 // ---- Settings → Account -----------------------------------------------------------------
 
 export async function renderAccount(box, { state }) {
@@ -446,11 +588,17 @@ export async function renderAccount(box, { state }) {
     me.via === 'session' ? h('div', { class: 'form-actions' }, h('button', {
       class: 'btn',
       onclick: async () => {
+        // this device's notifications were this account's: they stop
+        const sub = await pushSubscription().catch(() => null);
+        if (sub) {
+          await api('webpush/forget', { method: 'POST', body: { endpoint: sub.endpoint } }).catch(() => {});
+          await sub.unsubscribe().catch(() => {});
+        }
         await api('auth/logout', { method: 'POST' });
         location.replace('login.html');
       },
     }, 'Sign out')) : null)];
-  if (me.via === 'session') cards.push(linkedCard(me, status, () => renderAccount(box, { state })));
+  if (me.via === 'session') cards.push(pushCard(), linkedCard(me, status, () => renderAccount(box, { state })));
   if (me.via === 'session' && me.password) {
     const cur = h('input', { id: 'a-cur', type: 'password', autocomplete: 'current-password', required: true });
     const next = h('input', { id: 'a-new', type: 'password', autocomplete: 'new-password', required: true, minLength: 8 });

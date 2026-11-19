@@ -1448,6 +1448,10 @@ html.login-html { height: 100%; overflow: hidden; background: var(--bg); }
 .linked-list { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
 .linked-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid var(--border); }
 .linked-row b { font-weight: 600; }
+.push-card { display: flex; flex-direction: column; gap: 10px; }
+.push-card p, .push-card h3, .push-card h4 { margin: 0; }
+.push-channels { display: flex; flex-direction: column; gap: 6px; }
+.push-others h4 { font-size: 0.85rem; color: var(--muted); margin-top: 6px; }
 .google-mark { width: 18px; height: 18px; flex: none; }
 .login-or { display: flex; align-items: center; gap: 10px; color: var(--faint); font-size: 0.8rem; margin: 0; }
 .login-or::before, .login-or::after { content: ''; flex: 1; border-top: 1px solid var(--border); }

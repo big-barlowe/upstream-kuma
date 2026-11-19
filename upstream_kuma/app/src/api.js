@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { Graph } from './graph.js';
-import { deliver, providerCatalog, providers } from './notifier.js';
+import { deliver, providerCatalog, providers, setPushSender } from './notifier.js';
+import { WebPush, pushServiceOk } from './webpush.js';
 import { config, isAddon, log } from './config.js';
 import { decodeDataUrl } from './icons.js';
 import { HttpError, badRequest, int, idList, normalizeMonitor, normalizeTag } from './validate.js';
@@ -45,10 +46,11 @@ const json = (payload, headers = {}) => new RawResponse('application/json', JSON
 // Locations are relative, so they work behind any path prefix.
 const redirect = (location, headers = {}) => new RawResponse('text/plain; charset=utf-8', '', { Location: location, 'Cache-Control': 'no-store', ...headers }, 302);
 
-// Builds the router. `ctx` = { store, engine, icons, auth, oidc?, google? }. `auth`
+// Builds the router. `ctx` = { store, engine, icons, auth, oidc?, google?,
+// pushFetch? (what Web push posts with; tests fake it) }. `auth`
 // (an Auth from auth.js) says who each request is; routes are for admins
 // unless marked 'view' (viewers too, filtered to their scope) or 'public'.
-export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store }), google = new Oidc({ store, id: 'google' }) }) {
+export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store }), google = new Oidc({ store, id: 'google' }), pushFetch = globalThis.fetch }) {
   if (!auth) throw new Error('createApi needs auth');
   const routes = [];
   const route = (method, pattern, handler, access = 'admin') => {
@@ -64,6 +66,10 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
     tagMap: store.monitorTagMap(),
     tags: store.listTags(),
   }));
+
+  // Web push goes to each device as its account may see it.
+  const webPush = new WebPush({ store, viewFor, fetch: pushFetch });
+  setPushSender(webPush);
 
   // A monitor the request may look at: any for admins, visible ones for viewers.
   const seeMonitor = (id, view) => {
@@ -557,7 +563,11 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
   };
 
   route('GET', '/api/notification-types', () => providerCatalog());
-  route('GET', '/api/notifications', () => store.listNotifications());
+  // Web push channels say how many devices signed up to them.
+  route('GET', '/api/notifications', () => {
+    const devices = store.listPushDevices();
+    return store.listNotifications().map((n) => (n.type === 'webpush' ? { ...n, devices: devices.filter((d) => d.channelIds.includes(n.id)).length } : n));
+  });
 
   route('POST', '/api/notifications', ({ body }) => {
     const n = normalizeNotification(body);
@@ -585,7 +595,9 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
   route('POST', '/api/notifications/test', async ({ body }) => {
     const n = normalizeNotification({ name: 'Test', ...body });
     // no retries: the form shows what happened straight away
-    const [res] = await deliver([{ id: 0, ...n }], {
+    // a saved Web push channel tests on the devices signed up to it
+    const id = n.type === 'webpush' && store.getNotification(Number(body.id))?.type === 'webpush' ? Number(body.id) : 0;
+    const [res] = await deliver([{ ...n, id }], {
       kind: 'test',
       title: 'Test: Upstream Kuma is flowing',
       message: [
@@ -1182,6 +1194,108 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
   }, 'view');
 
   route('GET', '/api/users', () => store.listUsers().map(publicUser));
+
+  // ---- Web push: this account's devices ------------------------------------------
+  //
+  // Each device signs itself up (Settings → Account), with the push channels it
+  // wants. Only accounts signed in here have devices: Home Assistant's
+  // stand-in admin has no account to keep them with.
+
+  const pushChannels = () => store.listNotifications().filter((n) => n.type === 'webpush').map((n) => ({ id: n.id, name: n.name, active: n.active }));
+  const SERVICE_NAME = [[/apple\.com$/, 'Apple'], [/googleapis\.com$/, 'Google'], [/mozilla\.com$/, 'Mozilla'], [/windows\.com$/, 'Microsoft']];
+  const publicDevice = (d) => ({
+    id: d.id,
+    name: d.name,
+    channelIds: d.channelIds,
+    createdAt: d.createdAt,
+    lastOk: d.lastOk,
+    lastError: d.lastError,
+    endpoint: d.endpoint, // so a browser can tell which device is itself
+    service: SERVICE_NAME.find(([re]) => re.test(new URL(d.endpoint).hostname))?.[1] ?? '',
+  });
+  const pushAccount = (who) => {
+    if (who.via !== 'session') throw new HttpError(400, 'Push notifications go to accounts: open Upstream Kuma at its own address (the home-screen app) and sign in');
+    return who.user;
+  };
+  const pushChannelIds = (v) => {
+    const known = new Set(pushChannels().map((c) => c.id));
+    return [...new Set(idList(v) ?? [])].filter((id) => known.has(id));
+  };
+  const myDevice = (who, id) => {
+    const d = store.getPushDevice(Number(id));
+    if (!d || d.userId !== who.user.id) throw new HttpError(404, 'Device not found');
+    return d;
+  };
+
+  route('GET', '/api/webpush', ({ who }) => ({
+    publicKey: webPush.keys().publicKey,
+    channels: pushChannels(),
+    devices: who.via === 'session' ? store.listPushDevices(who.user.id).map(publicDevice) : [],
+  }), 'view');
+
+  // A device signing up (or again, with a renewed subscription): the same
+  // endpoint is the same device, now this account's.
+  route('POST', '/api/webpush/devices', ({ who, body }) => {
+    const user = pushAccount(who);
+    const sub = body.subscription ?? {};
+    const endpoint = String(sub.endpoint ?? '');
+    if (!pushServiceOk(endpoint)) throw new HttpError(400, 'That isn\'t a push service Upstream Kuma knows (Apple, Google, Mozilla or Microsoft)');
+    const p256dh = String(sub.keys?.p256dh ?? '');
+    const authKey = String(sub.keys?.auth ?? '');
+    if (Buffer.from(p256dh, 'base64url').length !== 65 || Buffer.from(authKey, 'base64url').length < 16) throw new HttpError(400, 'The subscription\'s keys are missing');
+    const origin = /^https?:\/\/[^\s/]+$/.test(String(body.origin ?? '')) ? String(body.origin) : '';
+    const data = {
+      userId: user.id,
+      p256dh,
+      auth: authKey,
+      origin,
+      name: String(body.name ?? '').trim().slice(0, 60) || 'Device',
+      channelIds: pushChannelIds(body.channelIds),
+    };
+    const old = store.findPushDevice(endpoint);
+    let id;
+    if (old) {
+      store.updatePushDevice(old.id, data);
+      id = old.id;
+    } else {
+      id = store.createPushDevice({ ...data, endpoint });
+    }
+    log.info(`${user.username} signed up "${data.name}" for push notifications`);
+    return publicDevice(store.getPushDevice(id));
+  }, 'view');
+
+  route('PUT', '/api/webpush/devices/:id', ({ who, params, body }) => {
+    pushAccount(who);
+    const d = myDevice(who, params.id);
+    store.updatePushDevice(d.id, {
+      name: body.name === undefined ? undefined : String(body.name).trim().slice(0, 60) || d.name,
+      channelIds: body.channelIds === undefined ? undefined : pushChannelIds(body.channelIds),
+    });
+    return publicDevice(store.getPushDevice(d.id));
+  }, 'view');
+
+  route('DELETE', '/api/webpush/devices/:id', ({ who, params }) => {
+    pushAccount(who);
+    store.deletePushDevice(myDevice(who, params.id).id);
+    return { ok: true };
+  }, 'view');
+
+  // Signing out on a device stops its notifications.
+  route('POST', '/api/webpush/forget', ({ who, body }) => {
+    const d = who.via === 'session' ? store.findPushDevice(String(body.endpoint ?? '')) : null;
+    if (d && d.userId === who.user.id) store.deletePushDevice(d.id);
+    return { ok: true };
+  }, 'view');
+
+  route('POST', '/api/webpush/devices/:id/test', async ({ who, params }) => {
+    pushAccount(who);
+    try {
+      await webPush.test(myDevice(who, params.id));
+    } catch (err) {
+      throw new HttpError(502, err.message);
+    }
+    return { ok: true };
+  }, 'view');
 
   route('POST', '/api/users', async ({ body }) => {
     const data = normalizeUser(body);

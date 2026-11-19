@@ -73,11 +73,11 @@ On a phone (or any window up to 700px wide), the page changes shape so Flows get
 - **At the bottom, a menu:** **Monitors** (the monitor list, with search and tags, as a sheet over Flows; tap a monitor to trace it), **Alerts** (with the number of unresolved problems), the **source** in the middle (back to Flows; once there, it leaves a trace, then fits everything in view), **Add** (a new monitor) and **Settings**.
 - **Flows fills the screen** between the two. Pinch to zoom and drag to move around; tap a monitor to trace it, and its expand button for its details, which come up as a sheet (swipe it down to close it). The funnel at the top left filters by tag; it lights up while a filter is on. A traced monitor's name shows at the top; the rest of its line scrolls when it doesn't fit, and its × shows everything again. The layout and Fit buttons are at the bottom right.
 
-**Add it to your home screen** (Safari → Share → *Add to Home Screen*) and it opens full screen like an app, with no browser bars. That works with the address you reach it on directly, for example `http://<home-assistant-ip>:8099` with direct access turned on (see [Add-on options](#add-on-options)). A home-screen app can't sign in to Home Assistant, so the ingress address only works inside the Home Assistant app.
+**Add it to your home screen** (Safari → Share → *Add to Home Screen*) and it opens full screen like an app, with no browser bars. That works with the address you reach it on directly, for example `http://<home-assistant-ip>:8099` with direct access turned on (see [Add-on options](#add-on-options)). A home-screen app can't sign in to Home Assistant, so the ingress address only works inside the Home Assistant app. The home-screen app can also get **push notifications**: see [Push notifications on a phone](#push-notifications-on-a-phone).
 
 ## Settings
 
-The **Settings** page has sections, listed on the left (on a phone, as tabs along the top): **General** (how long to keep heartbeat history, the public address that links in alerts point to, and the version), **Notifications** (rules, channels and problem definitions), **Tags**, **Users** (accounts, what viewers see, single sign-on and Google), **Import & export** (monitors as a CSV file), **MIB library** and **Account** (your own password, linked sign-ins, and signing out). Keeping them here, away from the monitor list, means tags and notifications aren't changed by accident.
+The **Settings** page has sections, listed on the left (on a phone, as tabs along the top): **General** (how long to keep heartbeat history, the public address that links in alerts point to, and the version), **Notifications** (rules, channels and problem definitions), **Tags**, **Users** (accounts, what viewers see, single sign-on and Google), **Import & export** (monitors as a CSV file), **MIB library** and **Account** (your own password, linked sign-ins, push notifications on this device, and signing out). Keeping them here, away from the monitor list, means tags and notifications aren't changed by accident.
 
 ## Tags
 
@@ -138,6 +138,8 @@ An alert goes to every channel of every rule that matches it, once per channel. 
 - **Home Assistant**: any `notify.*` service (e.g. `notify.mobile_app_pixel`), or `persistent_notification.create`. This works with no setup when running as an add-on.
 - **ntfy, Discord, Slack, Google Chat, Telegram, Pushover, Gotify, Webhook, Email (SMTP)**: fill in the fields and use **Send test**. For Google Chat, add a webhook to the space (**Apps & integrations → Webhooks**) and paste its URL. Its alerts are cards: the status, the details (target, reason, time…), and the **flow**: the monitors above the one at fault, it, and the tree of monitors it took down, in Flows' colours. With a **public address** (Settings → General) they get an **Open in Upstream Kuma** button. A **Webhook** to a Google Chat URL sends the same card.
 
+- **Web push (phones, browsers)**: notifications straight to a phone's home-screen app (iPhone and iPad with iOS 16.4 or later, Android) or a desktop browser, with no other app. See *Push notifications on a phone* below.
+
 The webhook channel POSTs JSON: `{ kind, title, message, time, monitor, problem, affected: [{ id, name, depth }], upstream, facts: [{ key, label, value }], url }`. `kind` is `down`, `up`, `problem` (a problem opened) or `resolved` (it cleared); `problem` is its definition, `{ id, name, severity }`, for the last two. `upstream` names the monitors above the one at fault (root first, through each one's first parent), `facts` are the message's details one by one, and `url` links to the monitor if a public address is set (else `null`). The other channels send severe problems as loudly as a monitor going down, and warnings a step below.
 
 **Problem definitions** say what counts as a problem. A **problem** is one that is happening: a definition that holds on a monitor right now, until it clears. Each definition has a **severity**, which its problems carry:
@@ -170,6 +172,20 @@ Each definition's card shows which monitors it watches and how many problems are
 **+ Problem** works on any row of *All data*, not only when picking, so it's also the way to alert on a value no ready-made definition covers.
 
 The **Alerts** page starts with **Unresolved**: every monitor that is down and every open problem, most severe first. Filter it by severity and by tag (pills or an expression). A problem on a monitor that isn't up shows its last known value. Below that is every alert that was sent, and which channels delivered it.
+
+### Push notifications on a phone
+
+A **Web push** channel is a channel like any other: rules decide which alerts it gets. What's different is who receives them: **each phone signs itself up**, rather than being typed into the channel. Make one push channel per kind of alert you want people to be able to pick, say *Push: everything* (a rule for any problem) and *Push: critical* (a rule for severe problems on monitors tagged *Critical*).
+
+Then, on each phone:
+
+1. Open Upstream Kuma at its **https://** address (push needs one; on an iPhone, Apple's push service won't accept anything else). Under Home Assistant that's the direct port behind your own https proxy, with direct access turned on, since a home-screen app can't use the ingress address.
+2. **On an iPhone or iPad, add it to the Home Screen** (Safari → Share → *Add to Home Screen*) and open it from there: iOS only offers notifications to home-screen apps. Android and desktop browsers can sign up straight from the browser.
+3. Sign in, open **Settings → Account → Push notifications**, tick the push channels this device should get, and tap **Turn on notifications** (and allow them when asked). **Send a test** checks it works.
+
+Each device belongs to the account signed in on it. A viewer's devices only get alerts about monitors the viewer can see, with the downstream count trimmed to those. Tapping a notification opens that monitor in Flows. A monitor's "back up" replaces its "down" notification instead of stacking up. Signing out on a device stops its notifications; so does deleting the account, or turning it off. The account page also lists your other devices (when each last got one, and why the last one failed, if it did) to remove ones you no longer have. The channel's line under **Channels** says how many devices signed up to it, and its **Send test** goes to all of them.
+
+The notifications go through the phone's own push service (Apple's for iPhones, Google's for Chrome and Android, Mozilla's for Firefox), encrypted so that only the device can read them.
 
 **Upgrading from 0.10 or earlier**, where each monitor had channel checkboxes, turns those choices into rules so the same alerts keep going to the same places. A channel every monitor used gets a rule for all monitors. A channel only some monitors used gets a tag on those monitors, named like *Alerts: Email*, and a rule for that tag. Tidy them up as you like.
 

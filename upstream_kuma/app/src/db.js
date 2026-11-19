@@ -261,6 +261,25 @@ export const MIGRATIONS = [
   ALTER TABLE users ADD COLUMN google_name TEXT NOT NULL DEFAULT '';
   CREATE UNIQUE INDEX users_google_sub ON users(google_sub);
   `,
+  // v15: devices signed up for Web push (webpush.js): a browser's push
+  // subscription (endpoint and keys), the account it belongs to, the address
+  // it signed up at (the VAPID contact), and the push channels it wants.
+  `
+  CREATE TABLE push_devices (
+    id          INTEGER PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    endpoint    TEXT    NOT NULL UNIQUE,
+    p256dh      TEXT    NOT NULL,
+    auth        TEXT    NOT NULL,
+    origin      TEXT    NOT NULL DEFAULT '',
+    name        TEXT    NOT NULL DEFAULT '',
+    channel_ids TEXT    NOT NULL DEFAULT '[]',
+    created_at  INTEGER NOT NULL,
+    last_ok     INTEGER,
+    last_error  TEXT    NOT NULL DEFAULT ''
+  );
+  CREATE INDEX push_devices_user ON push_devices(user_id);
+  `,
 ];
 
 const TAG_COLS = 'id, name, color, icon, icon_updated_at AS iconV';
@@ -327,6 +346,22 @@ function rowToUser(r) {
     active: Boolean(r.active),
     createdAt: r.created_at,
     lastLogin: r.last_login ?? null,
+  };
+}
+
+function rowToPushDevice(r) {
+  return {
+    id: r.id,
+    userId: r.user_id,
+    endpoint: r.endpoint,
+    p256dh: r.p256dh,
+    auth: r.auth,
+    origin: r.origin,
+    name: r.name,
+    channelIds: JSON.parse(r.channel_ids),
+    createdAt: r.created_at,
+    lastOk: r.last_ok ?? null,
+    lastError: r.last_error,
   };
 }
 
@@ -894,6 +929,43 @@ export class Store {
 
   deleteUser(id) {
     return this.q('DELETE FROM users WHERE id = ?').run(id).changes > 0;
+  }
+
+  // ---- Web push devices ----
+
+  listPushDevices(userId = null) {
+    const rows = userId == null
+      ? this.q('SELECT * FROM push_devices ORDER BY id').all()
+      : this.q('SELECT * FROM push_devices WHERE user_id = ? ORDER BY id').all(userId);
+    return rows.map(rowToPushDevice);
+  }
+
+  getPushDevice(id) {
+    const r = this.q('SELECT * FROM push_devices WHERE id = ?').get(id);
+    return r ? rowToPushDevice(r) : null;
+  }
+
+  findPushDevice(endpoint) {
+    const r = this.q('SELECT * FROM push_devices WHERE endpoint = ?').get(String(endpoint));
+    return r ? rowToPushDevice(r) : null;
+  }
+
+  createPushDevice(d) {
+    return Number(this.q(`INSERT INTO push_devices (user_id, endpoint, p256dh, auth, origin, name, channel_ids, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(d.userId, d.endpoint, d.p256dh, d.auth, d.origin ?? '', d.name ?? '', JSON.stringify(d.channelIds ?? []), Date.now()).lastInsertRowid);
+  }
+
+  // Only the fields given change.
+  updatePushDevice(id, d) {
+    const cols = { userId: 'user_id', p256dh: 'p256dh', auth: 'auth', origin: 'origin', name: 'name', channelIds: 'channel_ids', lastOk: 'last_ok', lastError: 'last_error' };
+    for (const [k, col] of Object.entries(cols)) {
+      if (d[k] === undefined) continue;
+      this.q(`UPDATE push_devices SET ${col} = ? WHERE id = ?`).run(k === 'channelIds' ? JSON.stringify(d[k]) : d[k], id);
+    }
+  }
+
+  deletePushDevice(id) {
+    return this.q('DELETE FROM push_devices WHERE id = ?').run(id).changes > 0;
   }
 
   createSession(tokenHash, userId, ttl) {

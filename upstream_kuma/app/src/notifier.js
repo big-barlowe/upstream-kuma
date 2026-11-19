@@ -22,6 +22,13 @@ export function level(a) {
 
 const POST_TIMEOUT = 20000;
 
+// The Web push sender (a WebPush from webpush.js), set by createApi(): it
+// needs the store and who may see what.
+let pushSender = null;
+export const setPushSender = (sender) => {
+  pushSender = sender;
+};
+
 // An error not worth retrying: the service answered and said no (a 4xx
 // other than 408/429), or the channel is missing a setting.
 const permanent = (message) => Object.assign(new Error(message), { permanent: true });
@@ -344,6 +351,18 @@ export const providers = {
     },
   },
 
+  // Phones and browsers that signed up to this channel (webpush.js); they
+  // sign up themselves, in Settings → Account.
+  webpush: {
+    label: 'Web push (phones, browsers)',
+    fields: [],
+    help: 'Phones and browsers sign up to this channel themselves: in Settings → Account, on each one (on an iPhone, in the app added to the Home Screen). Rules decide which alerts it gets; a viewer\'s devices only get those about monitors the viewer can see.',
+    async send(cfg, a, ch) {
+      if (!pushSender) throw permanent('Web push is not set up');
+      await pushSender.sendChannel(ch, a);
+    },
+  },
+
   email: {
     label: 'Email (SMTP)',
     fields: [
@@ -383,7 +402,7 @@ export async function deliver(channels, alert, { retries = RETRY_DELAYS, sleep =
     for (let tries = 1; ; tries++) {
       try {
         if (!provider) throw permanent(`Unknown notification type "${ch.type}"`);
-        await provider.send(ch.config, alert);
+        await provider.send(ch.config, alert, ch);
         log.info(`Sent "${alert.title}" via ${ch.name}${tries > 1 ? ` (try ${tries})` : ''}`);
         return { id: ch.id, name: ch.name, ok: true, tries };
       } catch (err) {
@@ -401,5 +420,5 @@ export async function deliver(channels, alert, { retries = RETRY_DELAYS, sleep =
 }
 
 export function providerCatalog() {
-  return Object.fromEntries(Object.entries(providers).map(([k, p]) => [k, { label: p.label, fields: p.fields }]));
+  return Object.fromEntries(Object.entries(providers).map(([k, p]) => [k, { label: p.label, fields: p.fields, help: p.help }]));
 }

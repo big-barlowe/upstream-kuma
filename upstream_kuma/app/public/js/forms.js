@@ -608,7 +608,8 @@ export function renderNotificationForm(root, { catalog, existing, onDone, alertA
     ? structuredClone(existing)
     : { name: '', type: 'homeassistant', config: {}, active: true, alertAll };
   const fieldsBox = h('div');
-  const renderFields = () => fill(fieldsBox, 
+  const renderFields = () => fill(fieldsBox,
+    catalog[draft.type].help ? h('p', { class: 'help' }, catalog[draft.type].help) : null,
     catalog[draft.type].fields.map((f) => field(f, draft.config[f.key], (v) => { draft.config[f.key] = v; })));
 
   const form = h('form', { class: 'card form' },
@@ -641,7 +642,7 @@ export function renderNotificationForm(root, { catalog, existing, onDone, alertA
         class: 'btn',
         onclick: async () => {
           try {
-            await api('notifications/test', { method: 'POST', body: draft });
+            await api('notifications/test', { method: 'POST', body: { ...draft, id: existing?.id } });
             toast('Test notification sent', 'success');
           } catch (err) {
             toast(`Test failed: ${err.message}`, 'error');

@@ -324,7 +324,9 @@ export async function renderNotifications(main, { state, editing: addingChannel 
       h('div', null,
         h('h3', null, n.name),
         h('div', { class: 'muted small' }, catalog[n.type]?.label ?? n.type, n.active ? '' : ' · inactive', ' · ',
-          uses(n) ? `in ${uses(n)} rule${uses(n) === 1 ? '' : 's'}` : h('span', { class: 'notif-unused' }, 'in no rule'))),
+          uses(n) ? `in ${uses(n)} rule${uses(n) === 1 ? '' : 's'}` : h('span', { class: 'notif-unused' }, 'in no rule'),
+          // devices sign themselves up (Settings → Account)
+          n.type === 'webpush' ? [' · ', n.devices ? `${n.devices} device${n.devices === 1 ? '' : 's'}` : h('span', { class: 'notif-unused' }, 'no devices yet')] : null)),
       h('div', { class: 'actions' },
         h('button', { class: 'btn', onclick: () => showForm(n) }, 'Edit'),
         h('button', {
