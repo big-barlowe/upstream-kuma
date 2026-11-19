@@ -139,26 +139,93 @@ test('Home Assistant: sounds and channels for the Companion app, critical down a
   const { config } = await import('../src/config.js');
   const saved = { haUrl: config.haUrl, haToken: config.haToken };
   Object.assign(config, { haUrl: 'http://ha.test', haToken: 'x' });
+  const pick = (d) => d && { channel: d.channel, ttl: d.ttl, priority: d.priority, push: d.push };
   try {
     const phone = { service: 'notify.mobile_app_iphone', alertSound: 'Alarm.caf', resolvedSound: 'Tink.caf' };
     let [c] = await sent('homeassistant', phone, alert);
     assert.equal(c.url, 'http://ha.test/api/services/notify/mobile_app_iphone');
-    assert.deepEqual(c.body.data, { channel: 'Upstream Kuma alerts', ttl: 0, priority: 'high', push: { sound: 'Alarm.caf' } });
+    assert.deepEqual(pick(c.body.data), { channel: 'Upstream Kuma alerts', ttl: 0, priority: 'high', push: { sound: 'Alarm.caf' } });
     [c] = await sent('homeassistant', phone, back);
-    assert.deepEqual(c.body.data, { channel: 'Upstream Kuma resolved', push: { sound: 'Tink.caf' } });
+    assert.deepEqual(pick(c.body.data), { channel: 'Upstream Kuma resolved', ttl: undefined, priority: undefined, push: { sound: 'Tink.caf' } });
     [c] = await sent('homeassistant', { ...phone, critical: true }, alert);
-    assert.deepEqual(c.body.data, { channel: 'alarm_stream', ttl: 0, priority: 'high', push: { sound: { name: 'Alarm.caf', critical: 1, volume: 1 } } });
+    assert.deepEqual(pick(c.body.data), { channel: 'alarm_stream', ttl: 0, priority: 'high', push: { sound: { name: 'Alarm.caf', critical: 1, volume: 1 } } });
     // recoveries are never critical
     [c] = await sent('homeassistant', { ...phone, critical: true }, back);
     assert.equal(c.body.data.push.sound, 'Tink.caf');
     // a phone without sounds still gets its channel; other services get no data
     [c] = await sent('homeassistant', { service: 'notify.mobile_app_pixel' }, back);
-    assert.deepEqual(c.body.data, { channel: 'Upstream Kuma resolved' });
+    assert.deepEqual(pick(c.body.data), { channel: 'Upstream Kuma resolved', ttl: undefined, priority: undefined, push: undefined });
     [c] = await sent('homeassistant', { service: 'notify.telegram' }, alert);
     assert.equal(c.body.data, undefined);
+    assert.equal(c.body.title, alert.title);
     [c] = await sent('homeassistant', { service: 'persistent_notification.create', critical: true }, alert);
     assert.equal(c.body.data, undefined);
+    assert.equal(c.body.message, alert.message);
   } finally {
     Object.assign(config, saved);
   }
+});
+
+test('Home Assistant phones get the Chat card: headline, logo, the flow, and a tap that opens the monitor', async () => {
+  const { config } = await import('../src/config.js');
+  const saved = { haUrl: config.haUrl, haToken: config.haToken };
+  Object.assign(config, { haUrl: 'http://ha.test', haToken: 'x' });
+  try {
+    const [c] = await sent('homeassistant', { service: 'notify.mobile_app_iphone' }, alert);
+    assert.equal(c.body.title, 'Host <2> is unreachable');
+    assert.equal(c.body.message, [
+      '🔴 DOWN · 2 downstream cut off',
+      'Reason: timeout',
+      'Time: now',
+      '',
+      'Flow',
+      '🟢 WAN',
+      '└ 🔴 Host <2> · DOWN',
+      '  └ ⚪ Service 2.1',
+      '    └ ⚪ Microservice 2.1.1',
+    ].join('\n'));
+    const d = c.body.data;
+    assert.equal(d.subtitle, 'Upstream Kuma · Alert');
+    assert.match(d.icon_url, /icon\.png$/);
+    assert.deepEqual(d.attachment, { url: d.icon_url, 'content-type': 'png' });
+    assert.deepEqual([d.url, d.clickAction], [alert.url, alert.url]);
+    assert.deepEqual(d.actions, [{ action: 'URI', title: 'Open in Upstream Kuma', uri: alert.url }]);
+    assert.equal(d.color, '#ef4444');
+    // no public address and not an add-on: nowhere to go, so no link
+    const [c2] = await sent('homeassistant', { service: 'notify.mobile_app_iphone' }, { ...alert, url: null });
+    assert.equal(c2.body.data.url, undefined);
+    assert.equal(c2.body.data.actions, undefined);
+  } finally {
+    Object.assign(config, saved);
+  }
+});
+
+test('the card as text is cut to fit, keeping the status, details, and the monitor', async () => {
+  const { cardText } = await import('../src/notifier.js');
+  const many = { ...alert, affected: Array.from({ length: 300 }, (_, i) => ({ id: i, name: `Camera ${i}`, depth: 1 })) };
+  const short = cardText(many, { fits: (t) => Buffer.byteLength(t) <= 600 });
+  assert.ok(Buffer.byteLength(short) <= 600);
+  assert.match(short, /^🔴 DOWN · 300 downstream cut off\n/);
+  assert.match(short, /└ 🔴 Host <2> · DOWN\n/);
+  assert.match(short, /└ … and \d+ more$/);
+  // the Chat card's limit when there's room
+  assert.match(cardText(many), /… and 260 more$/);
+});
+
+test('Pushover gets the card in HTML, a link to the monitor and the alert time; ntfy the card as text, the logo and the link', async () => {
+  let [c] = await sent('pushover', { userKey: 'u', appToken: 't' }, { ...alert, time: 1_700_000_000_000 });
+  assert.equal(c.body.html, 1);
+  assert.equal(c.body.timestamp, 1_700_000_000);
+  assert.deepEqual([c.body.url, c.body.url_title], [alert.url, 'Open in Upstream Kuma']);
+  assert.match(c.body.message, /^<font color="#ef4444"><b>● DOWN<\/b><\/font><font color="#94a3b8"> · 2 downstream cut off<\/font>\n<b>Reason<\/b>: timeout\n/);
+  assert.match(c.body.message, /<b>Host &lt;2&gt;<\/b> <font color="#ef4444"><b>DOWN<\/b><\/font>/);
+  assert.ok([...c.body.message].length <= 1024);
+
+  [c] = await sent('ntfy', { topic: 'net' }, alert);
+  assert.match(c.body.message, /^🔴 DOWN · 2 downstream cut off\n/);
+  assert.match(c.body.icon, /icon\.png$/);
+  assert.equal(c.body.click, alert.url);
+  assert.deepEqual(c.body.actions, [{ action: 'view', label: 'Open in Upstream Kuma', url: alert.url, clear: true }]);
+  [c] = await sent('ntfy', { topic: 'net' }, { ...alert, url: null });
+  assert.deepEqual([c.body.click, c.body.actions], [undefined, undefined]);
 });

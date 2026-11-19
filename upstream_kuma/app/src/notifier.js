@@ -1,5 +1,6 @@
+import os from 'node:os';
 import { haRequest } from './checkers/homeassistant.js';
-import { log } from './config.js';
+import { isAddon, log } from './config.js';
 
 // An alert passed to every provider:
 //   { kind: 'down' | 'up' | 'problem' | 'resolved' | 'test', title, message,
@@ -43,14 +44,31 @@ export const HA_CHANNELS = { alert: 'Upstream Kuma alerts', resolved: 'Upstream 
 const HA_IOS_SOUNDS = ['default', 'none'].map((value) => ({ value, label: value === 'none' ? 'None (silent)' : 'The default tone' }));
 const haSound = (key, label, help) => ({ key, label, placeholder: 'default', suggest: HA_IOS_SOUNDS, help });
 
-// The `data` for a Companion app notification. Only for notify services, and
-// only when it's a phone (mobile_app_…) or a sound option is set: other
-// notify services may refuse keys they don't know.
-export function haPushData(cfg, a, service) {
+// The `data` for a Companion app notification: the logo, where a tap goes,
+// the colour, sounds. Only for notify services, and only when it's a phone
+// (mobile_app_…) or a sound option is set: other notify services may refuse
+// keys they don't know. `link`: the monitor's page, else Home Assistant's
+// panel for the add-on.
+export function haPushData(cfg, a, service, link = a.url ?? haPanel()) {
+  if (!service.startsWith('mobile_app_') && !cfg.alertSound && !cfg.resolvedSound && !cfg.critical) return null;
   const sound = soundFor(cfg, a);
   const critical = Boolean(cfg.critical) && level(a) === 'urgent';
-  if (!service.startsWith('mobile_app_') && !cfg.alertSound && !cfg.resolvedSound && !cfg.critical) return null;
-  const data = { channel: HA_CHANNELS[isRecovery(a) ? 'resolved' : 'alert'] };
+  const { kind } = headline(a);
+  const data = {
+    subtitle: `Upstream Kuma · ${kind}`, // iOS, under the title, as on the Chat card
+    channel: HA_CHANNELS[isRecovery(a) ? 'resolved' : 'alert'],
+    color: chatLook(a).color, // Android
+    icon_url: LOGO, // Android
+    attachment: { url: LOGO, 'content-type': 'png' }, // iOS: the logo beside the text
+    group: `upstream-kuma-${a.monitor?.id ?? 'test'}`, // Android: a monitor's alerts together
+  };
+  if (link) {
+    Object.assign(data, {
+      url: link, // iOS
+      clickAction: link, // Android
+      actions: [{ action: 'URI', title: 'Open in Upstream Kuma', uri: link }],
+    });
+  }
   if (level(a) === 'urgent') Object.assign(data, { ttl: 0, priority: 'high' }); // ring now, not when the phone next syncs
   if (critical) {
     data.channel = 'alarm_stream'; // Android: the alarm volume, through Do Not Disturb
@@ -60,6 +78,13 @@ export function haPushData(cfg, a, service) {
   }
   return data;
 }
+
+// A notification's push payload is at most 4 KB on an iPhone, title, data
+// and all: the text gets about half.
+const HA_BYTES = 2000;
+const NTFY_BYTES = 3800; // ntfy's limit is 4,096
+const PUSHOVER_CHARS = 1024;
+const bytes = (max) => (t) => Buffer.byteLength(t) <= max;
 
 const POST_TIMEOUT = 20000;
 
@@ -145,22 +170,89 @@ function chatLook(a) {
   }
 }
 
-// The flow as lines of text: up to three monitors above (root side first),
-// the monitor, then its downstream tree.
-function chatFlow(a, look) {
+// The flow, as rows: up to three monitors above (root side first), the
+// monitor, then its downstream tree, the first `limit` of it. Each row is
+// { level, kind: 'above' | 'up' | 'self' | 'down' | 'more', name?, n? }.
+function flowRows(a, limit = CHAT_ROWS) {
   const up = a.upstream ?? [];
   const shown = up.slice(-3);
   const rows = [];
-  if (up.length > shown.length) rows.push({ level: 0, text: font(CHAT.line, `… ${up.length - shown.length} more above`) });
+  if (up.length > shown.length) rows.push({ level: 0, kind: 'above', n: up.length - shown.length });
   const first = rows.length;
-  shown.forEach((name, i) => rows.push({ level: first + i, text: `${font(CHAT.up, '●')} ${font(CHAT.line, esc(name))}` }));
+  shown.forEach((name, i) => rows.push({ level: first + i, kind: 'up', name }));
   const at = rows.length;
-  const name = a.monitor?.name ?? 'Monitor';
-  rows.push({ level: at, text: `${font(look.color, '●')} <b>${esc(name)}</b> ${font(look.color, `<b>${esc(look.word)}</b>`)}` });
+  rows.push({ level: at, kind: 'self', name: a.monitor?.name ?? 'Monitor' });
   const affected = a.affected ?? [];
-  for (const x of affected.slice(0, CHAT_ROWS)) rows.push({ level: at + x.depth, text: `${font(look.below, '●')} ${esc(x.name)}` });
-  if (affected.length > CHAT_ROWS) rows.push({ level: at + 1, text: font(CHAT.line, `… and ${affected.length - CHAT_ROWS} more`) });
-  return rows.map(({ level, text }) => (level ? `${INDENT.repeat(level - 1)}${font(CHAT.line, '└')} ` : '') + text);
+  for (const x of affected.slice(0, limit)) rows.push({ level: at + x.depth, kind: 'down', name: x.name });
+  if (affected.length > limit) rows.push({ level: at + 1, kind: 'more', n: affected.length - limit });
+  return rows;
+}
+
+// The flow as lines of Chat's HTML, in Flows' colours.
+function chatFlow(a, look) {
+  return flowRows(a).map((r) => {
+    const text = {
+      above: () => font(CHAT.line, `… ${r.n} more above`),
+      up: () => `${font(CHAT.up, '●')} ${font(CHAT.line, esc(r.name))}`,
+      self: () => `${font(look.color, '●')} <b>${esc(r.name)}</b> ${font(look.color, `<b>${esc(look.word)}</b>`)}`,
+      down: () => `${font(look.below, '●')} ${esc(r.name)}`,
+      more: () => font(CHAT.line, `… and ${r.n} more`),
+    }[r.kind]();
+    return (r.level ? `${INDENT.repeat(r.level - 1)}${font(CHAT.line, '└')} ` : '') + text;
+  });
+}
+
+// ---- The card, for phones ------------------------------------------------------
+// Pushover, ntfy and the Home Assistant Companion app show what the Google
+// Chat card shows, as text: the status, the details, and the flow, with
+// coloured dots (emoji, or Pushover's <font> tags), the logo where the
+// service can show one, and a tap that opens the monitor.
+
+export const LOGO = CHAT_LOGO;
+const DOT = { [CHAT.down]: '🔴', [CHAT.up]: '🟢', [CHAT.pending]: '🟠', [CHAT.blocked]: '⚪', [CHAT.info]: '🔵', [CHAT.line]: '⚪' };
+
+// The header's two parts: "Alert: Router is unreachable" → { kind: 'Alert',
+// headline: 'Router is unreachable' }.
+export function headline(a) {
+  const prefix = /^([^:]{1,20}):\s*/.exec(a.title ?? '');
+  return { kind: prefix ? prefix[1] : 'Alert', headline: prefix ? a.title.slice(prefix[0].length) : a.title };
+}
+
+// The card's body as text. `html`: Pushover's tags (<b>, <font color>);
+// otherwise emoji dots. `fits(text)` says whether it's short enough: the
+// downstream tree is cut ("… and N more") until it is.
+export function cardText(a, { html = false, fits = () => true } = {}) {
+  const look = chatLook(a);
+  const n = a.affected?.length ?? 0;
+  const e = html ? esc : (x) => String(x ?? '');
+  const paint = (color, x) => (html ? font(color, x) : x);
+  const bold = (x) => (html ? `<b>${x}</b>` : x);
+  const dot = (color) => (html ? font(color, '●') : DOT[color] ?? '⚪');
+  const status = `${html ? font(look.color, `<b>● ${e(look.word)}</b>`) : `${dot(look.color)} ${look.word}`}${n ? paint(CHAT.line, ` · ${look.list}`) : ''}`;
+  const facts = (a.facts ?? []).map((f) => `${bold(e(f.label))}: ${e(f.value)}`);
+  const line = (r) => {
+    const text = {
+      above: () => paint(CHAT.line, `… ${r.n} more above`),
+      up: () => `${dot(CHAT.up)} ${paint(CHAT.line, e(r.name))}`,
+      self: () => `${dot(look.color)} ${bold(e(r.name))} ${html ? font(look.color, `<b>${e(look.word)}</b>`) : `· ${look.word}`}`,
+      down: () => `${dot(look.below)} ${e(r.name)}`,
+      more: () => paint(CHAT.line, `… and ${r.n} more`),
+    }[r.kind]();
+    return (r.level ? `${INDENT.repeat(r.level - 1)}${paint(CHAT.line, '└')} ` : '') + text;
+  };
+  const build = (limit) => [status, ...facts, '', bold('Flow'), ...flowRows(a, limit).map(line)].join('\n');
+  let limit = Math.min(n, CHAT_ROWS);
+  let text = build(limit);
+  while (!fits(text) && limit > 0) text = build(--limit);
+  return text;
+}
+
+// Home Assistant's own panel for the add-on, for a tap when Upstream Kuma
+// has no public address: the Supervisor names the container after the
+// add-on's slug ("a1b2c3d4-upstream-kuma" for "a1b2c3d4_upstream_kuma").
+function haPanel() {
+  const m = isAddon && /^([a-z0-9]+)-upstream-kuma$/.exec(os.hostname());
+  return m ? `/hassio/ingress/${m[1]}_upstream_kuma` : null;
 }
 
 // The plain version: a bold title over the message in a code block (at most
@@ -258,7 +350,7 @@ export const providers = {
       haSound('resolvedSound', 'Resolved sound (iPhone, optional)', 'For “back up” and resolved alerts. Blank = the default tone.'),
       { key: 'critical', label: 'Critical alerts: down alerts (and severe problems) sound at full volume even when the phone is muted or in a Focus', type: 'checkbox' },
     ],
-    help: `Sounds work with the Home Assistant Companion app (notify.mobile_app_…). On an iPhone, name them below. On Android, a notification’s sound is its channel’s: alerts arrive on the channel “${HA_CHANNELS.alert}” and recoveries on “${HA_CHANNELS.resolved}”. Once one of each has arrived, set their sounds in Android’s notification settings for the Companion app.`,
+    help: `On a phone with the Home Assistant Companion app (notify.mobile_app_…), an alert shows what a Google Chat card does: the status, the details and the flow, with the Upstream Kuma logo. Tapping it opens the monitor in Upstream Kuma when it has a public address (Settings → General), otherwise its panel in Home Assistant. Sounds: on an iPhone, name them below. On Android, a notification’s sound is its channel’s: alerts arrive on the channel “${HA_CHANNELS.alert}” and recoveries on “${HA_CHANNELS.resolved}”. Once one of each has arrived, set their sounds in Android’s notification settings for the Companion app.`,
     async send(cfg, a) {
       required(cfg, 'service');
       const [domain, service] = cfg.service.replace(/^\//, '').split('.');
@@ -266,7 +358,8 @@ export const providers = {
       const data = domain === 'notify' ? haPushData(cfg, a, service) : null;
       const body = domain === 'persistent_notification'
         ? { title: a.title, message: a.message, notification_id: `upstream_kuma_${a.monitor?.id ?? 'test'}` }
-        : { title: a.title, message: a.message, ...(data ? { data } : {}) };
+        // a phone shows the card's header: the headline, with "Upstream Kuma · Alert" under it
+        : { title: data ? headline(a).headline : a.title, message: cardText(a, { fits: bytes(HA_BYTES) }), ...(data ? { data } : {}) };
       await haRequest(`/api/services/${domain}/${service}`, { method: 'POST', body });
     },
   },
@@ -280,7 +373,7 @@ export const providers = {
       { key: 'priority', label: 'Priority for down alerts (1-5)', placeholder: '5' },
       { key: 'resolvedPriority', label: 'Priority for resolved alerts (1-5)', placeholder: '3', help: 'A priority of its own gives recoveries a sound of their own (see above). 1 and 2 are silent.' },
     ],
-    help: 'ntfy messages can’t carry a sound: the phone plays the one set for the message’s priority. In the ntfy Android app, set a sound per priority (Settings → Channel settings), or per topic (the topic’s ⋮ → Subscription settings → Custom notification settings). Down alerts use the priority below, warnings 4, other alerts 3.',
+    help: 'Alerts show what a Google Chat card does, with the Upstream Kuma logo (Android), and open the monitor when Upstream Kuma has a public address (Settings → General). ntfy messages can’t carry a sound: the phone plays the one set for the message’s priority. In the ntfy Android app, set a sound per priority (Settings → Channel settings), or per topic (the topic’s ⋮ → Subscription settings → Custom notification settings). Down alerts use the priority below, warnings 4, other alerts 3.',
     async send(cfg, a) {
       required(cfg, 'topic');
       const server = (cfg.server || 'https://ntfy.sh').replace(/\/$/, '');
@@ -288,9 +381,11 @@ export const providers = {
       await post(server, {
         topic: cfg.topic,
         title: a.title,
-        message: a.message,
+        message: cardText(a, { fits: bytes(NTFY_BYTES) }),
         priority: isRecovery(a) ? priority(cfg.resolvedPriority, 3) : { urgent: priority(cfg.priority, 5), warning: 4, calm: 3 }[level(a)],
         tags: [isRecovery(a) ? 'white_check_mark' : { urgent: 'rotating_light', warning: 'warning', calm: 'droplet' }[level(a)]],
+        icon: LOGO,
+        ...(a.url ? { click: a.url, actions: [{ action: 'view', label: 'Open in Upstream Kuma', url: a.url, clear: true }] } : {}),
       }, cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {});
     },
   },
@@ -347,6 +442,7 @@ export const providers = {
 
   pushover: {
     label: 'Pushover',
+    help: `Alerts show what a Google Chat card does (with colours once opened in the app), with a link to the monitor when Upstream Kuma has a public address (Settings → General). Pushover shows your application’s icon: for the Upstream Kuma logo, upload ${LOGO} as its icon at pushover.net.`,
     fields: [
       { key: 'userKey', label: 'User key', secret: true },
       { key: 'appToken', label: 'Application token', secret: true },
@@ -360,8 +456,12 @@ export const providers = {
         token: cfg.appToken,
         user: cfg.userKey,
         title: a.title,
-        message: a.message,
+        // formatted in the app; the notification itself shows it as plain text
+        message: cardText(a, { html: true, fits: (t) => [...t].length <= PUSHOVER_CHARS }),
+        html: 1,
         priority: level(a) === 'urgent' ? 1 : 0,
+        timestamp: Math.floor((a.time ?? Date.now()) / 1000),
+        ...(a.url ? { url: a.url, url_title: 'Open in Upstream Kuma' } : {}),
         ...(sound ? { sound } : {}),
       });
     },

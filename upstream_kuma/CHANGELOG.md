@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.24.0
+
+- **Phone notifications look like the Google Chat card.** Pushover, ntfy and Home Assistant phone notifications now show the same things: the status and how many downstream monitors it cut off, the details (target, reason, time…), and the flow (the monitors above, the one at fault, its downstream tree) with coloured dots. A long tree is cut to fit ("… and N more").
+- **Tapping one opens the monitor**, as the card's button does, when Upstream Kuma has a public address (Settings → General). Home Assistant notifications also get an **Open in Upstream Kuma** button, and without a public address they open Upstream Kuma's panel in Home Assistant.
+- **The Upstream Kuma logo** on Home Assistant phone notifications (beside the alert on an iPhone, as its icon on Android) and on ntfy (Android). Pushover always shows your Pushover application's icon: upload the logo there (see the channel's help).
+- Home Assistant phone notifications have the card's header: the headline, with "Upstream Kuma · Alert" under it on an iPhone; on Android they're coloured by status and grouped per monitor.
+
 ## 0.23.0
 
 - **Alert and resolved sounds.** Pushover, Home Assistant and ntfy channels can make an alert and its "back up" sound different.
