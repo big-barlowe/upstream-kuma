@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.22.1
+
+- **Alerts reach iPhones.** Apple refused every alert pushed to an iPhone (`BadWebPushTopic`), though tests got through: the header that lets a monitor's "back up" replace an undelivered "down" wasn't in a shape Apple accepts. It now is, and a push service that still refuses it gets the push without one.
+- **Send a test says whether it arrived.** The device reports back when the test lands, so if it arrived but no banner showed, the card says so and where the system hides them (on a Mac: System Settings → Notifications → your browser, and Focus).
+
 ## 0.22.0
 
 - **Push notifications to phones**, including the iPhone home-screen app (iOS 16.4 or later), Android and desktop browsers. Add a channel of the new type **Web push** and give it rules like any channel; then each phone signs itself up in **Settings → Account → Push notifications**, picking which push channels it wants. Tapping a notification opens the monitor in Flows, and a monitor's "back up" replaces its "down". A viewer's phones only hear about monitors the viewer can see. Needs Upstream Kuma at an https:// address (and, on an iPhone, the app added to the Home Screen).

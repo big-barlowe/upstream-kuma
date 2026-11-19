@@ -440,6 +440,39 @@ function deviceName() {
   return how ? `${what} (${how})` : what;
 }
 
+// Listens for sw.js saying a push arrived on this device; `wait(tag, ms)`
+// resolves true once that tag has (even before it was asked: a push can beat
+// the server's reply), false after `ms`. Started before sending.
+function pushArrivals() {
+  const seen = new Set();
+  let want = null;
+  const on = (e) => {
+    if (typeof e.data?.pushed !== 'string') return;
+    seen.add(e.data.pushed);
+    want?.();
+  };
+  navigator.serviceWorker.addEventListener('message', on);
+  const stop = () => navigator.serviceWorker.removeEventListener('message', on);
+  return {
+    stop,
+    wait: (tag, ms = 15000) => new Promise((resolve) => {
+      const done = (v) => { clearTimeout(timer); want = null; stop(); resolve(v); };
+      const timer = setTimeout(() => done(false), ms);
+      want = () => { if (seen.has(tag)) done(true); };
+      want();
+    }),
+  };
+}
+
+// Where the system can hide a notification the browser did show.
+const HIDDEN_HINT = IOS
+  ? 'If no banner appeared, check the iPhone’s Settings → Notifications → Upstream Kuma, and any Focus that’s on.'
+  : /Mac/.test(navigator.userAgent)
+    ? `If no banner appeared, macOS is hiding them: System Settings → Notifications → ${/Edg\//.test(navigator.userAgent) ? 'Microsoft Edge' : /Firefox\//.test(navigator.userAgent) ? 'Firefox' : /Chrome\//.test(navigator.userAgent) ? 'Google Chrome' : 'your browser'} → Allow notifications (alert style Banners or Alerts), and check Focus / Do Not Disturb.`
+    : /Windows/.test(navigator.userAgent)
+      ? 'If no banner appeared, Windows is hiding them: Settings → System → Notifications → your browser, and check Do not disturb / Focus.'
+      : 'If no banner appeared, notifications for this browser are turned off in the system’s settings.';
+
 // a VAPID key (base64url) as the bytes subscribe() wants
 const keyBytes = (b64) => Uint8Array.from(atob(b64.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (b64.length % 4)) % 4)), (c) => c.charCodeAt(0));
 
@@ -500,6 +533,7 @@ function pushCard() {
         ? 'Notifications are turned off for Upstream Kuma on this device. Turn them on in the iPhone’s Settings → Notifications → Upstream Kuma, then come back.'
         : 'Notifications are blocked for this site. Allow them in the browser’s site settings, then come back.');
     } else if (mine) {
+      const testNote = h('p', { class: 'small muted', 'aria-live': 'polite' });
       const save = run(async () => {
         await api(`webpush/devices/${mine.id}`, { method: 'PUT', body: { name: nameInput.value, channelIds: [...picked] } });
         toast('Saved', 'success');
@@ -510,10 +544,24 @@ function pushCard() {
         channelPicks(save),
         h('div', { class: 'field' }, h('label', { for: 'push-name' }, 'This device’s name'), nameInput),
         mine.lastError ? h('p', { class: 'small scope-none' }, `The last one didn’t arrive: ${mine.lastError}`) : null,
+        testNote,
         h('div', { class: 'form-actions' },
           h('button', { class: 'btn', onclick: run(async () => {
-            await api(`webpush/devices/${mine.id}/test`, { method: 'POST' });
-            toast('Test sent: it should arrive in a moment', 'success');
+            fill(testNote, 'Sending…');
+            const arrivals = pushArrivals();
+            let tag;
+            try {
+              ({ tag } = await api(`webpush/devices/${mine.id}/test`, { method: 'POST' }));
+            } catch (err) {
+              arrivals.stop();
+              fill(testNote, '');
+              throw err;
+            }
+            fill(testNote, 'Sent. Waiting for it to arrive here…');
+            const arrived = await arrivals.wait(tag);
+            fill(testNote, arrived
+              ? ['It arrived on this device. ', HIDDEN_HINT]
+              : 'The push service took it, but it hasn’t arrived here yet. It may still come; if it never does, turn notifications off on this device and on again.');
           }) }, 'Send a test'),
           h('button', { class: 'btn ghost', onclick: run(async () => {
             await api(`webpush/devices/${mine.id}`, { method: 'DELETE' });

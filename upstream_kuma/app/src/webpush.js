@@ -76,6 +76,12 @@ export function encrypt(payload, { p256dh, auth }) {
   return Buffer.concat([header, asPublic, body]);
 }
 
+// The Topic header (RFC 8030: up to 32 base64url characters) lets a push
+// service replace an undelivered "down" with the "up". Apple refuses anything
+// that isn't valid base64url of exactly that shape (`monitor-5` was
+// BadWebPushTopic), so it's a hash: 24 bytes = 32 characters, no padding.
+export const pushTopic = (tag) => crypto.createHash('sha256').update(String(tag)).digest().subarray(0, 24).toString('base64url');
+
 const cut = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 // What a phone shows for an alert: the title, one line of what happened, and
@@ -131,30 +137,31 @@ export class WebPush {
 
   // One push to one device. Throws with `gone` (the subscription has
   // expired or been removed: forget the device) or `permanent` (refused).
-  async sendTo(device, payload) {
+  async sendTo(device, payload, { topic = true } = {}) {
     const keys = this.keys();
     const body = encrypt(Buffer.from(JSON.stringify(payload)), device);
+    const headers = {
+      Authorization: vapidHeader(device.endpoint, keys, device.origin.startsWith('https:') ? device.origin : 'mailto:upstream-kuma@example.invalid', this.now()),
+      'Content-Encoding': 'aes128gcm',
+      'Content-Type': 'application/octet-stream',
+      TTL: String(TTL),
+      Urgency: payload.level === 'urgent' ? 'high' : 'normal',
+    };
+    if (topic && payload.tag) headers.Topic = pushTopic(payload.tag);
     let res;
     try {
-      res = await this.fetch(device.endpoint, {
-        method: 'POST',
-        headers: {
-          Authorization: vapidHeader(device.endpoint, keys, device.origin.startsWith('https:') ? device.origin : 'mailto:upstream-kuma@example.invalid', this.now()),
-          'Content-Encoding': 'aes128gcm',
-          'Content-Type': 'application/octet-stream',
-          TTL: String(TTL),
-          Urgency: payload.level === 'urgent' ? 'high' : 'normal',
-          Topic: payload.tag.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32),
-        },
-        body,
-        signal: AbortSignal.timeout(TIMEOUT),
-      });
+      res = await this.fetch(device.endpoint, { method: 'POST', headers, body, signal: AbortSignal.timeout(TIMEOUT) });
     } catch (err) {
       const host = new URL(device.endpoint).host;
       throw new Error(err.name === 'TimeoutError' ? `No answer from ${host}` : `Couldn't reach ${host}: ${err.cause?.code ?? err.message}`);
     }
     const text = await res.text().catch(() => '');
     if (res.ok) return;
+    // a service that still dislikes the topic gets the push without one
+    if (res.status === 400 && headers.Topic && /topic/i.test(text)) {
+      log.warn(`${new URL(device.endpoint).host} refused the push's Topic (${text.slice(0, 100)}); sent it without one`);
+      return this.sendTo(device, payload, { topic: false });
+    }
     const message = `HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ''}`;
     if (res.status === 404 || res.status === 410) throw Object.assign(new Error(message), { gone: true });
     throw Object.assign(new Error(message), { permanent: res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429 });
@@ -178,18 +185,21 @@ export class WebPush {
   }
 
   // A test push to one device, straight away.
+  // Returns the push's tag: sw.js tells an open page when that tag arrives.
   async test(device) {
+    const tag = `test-${this.now()}`;
     const r = await this.#deliver(device, {
       title: 'Test: Upstream Kuma is flowing',
       body: 'Push notifications work on this device.',
       url: '#/settings/account',
-      tag: `test-${this.now()}`,
+      tag,
       kind: 'test',
       level: 'calm',
       time: this.now(),
     });
     if (r.gone) throw new Error('This device is no longer subscribed; turn notifications on again');
     if (!r.ok) throw r.err;
+    return tag;
   }
 
   // The provider's send: every device signed up to the channel, each with

@@ -13,7 +13,7 @@ self.addEventListener('push', (e) => {
     d = { title: 'Upstream Kuma', body: e.data ? e.data.text() : '' };
   }
   // every push must show something (iOS stops delivering otherwise)
-  e.waitUntil(self.registration.showNotification(d.title || 'Upstream Kuma', {
+  e.waitUntil(Promise.all([self.registration.showNotification(d.title || 'Upstream Kuma', {
     body: d.body || '',
     // a monitor's "back up" replaces its "down", and still alerts
     tag: d.tag,
@@ -23,7 +23,12 @@ self.addEventListener('push', (e) => {
     badge: 'icon-192.png',
     requireInteraction: d.level === 'urgent',
     data: { url: d.url || '#/' },
-  }));
+  }),
+  // tell open pages it arrived: Send a test can then tell "the system hid
+  // it" from "it never came"
+  self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+    .then((wins) => wins.forEach((w) => w.postMessage({ pushed: d.tag }))),
+  ]));
 });
 
 self.addEventListener('notificationclick', (e) => {

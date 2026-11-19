@@ -6,7 +6,7 @@ import { Engine } from '../src/engine.js';
 import { createApi, RawResponse } from '../src/api.js';
 import { Auth } from '../src/auth.js';
 import { deliver } from '../src/notifier.js';
-import { encrypt, pushPayload, pushServiceOk, vapidHeader, vapidKeys } from '../src/webpush.js';
+import { encrypt, pushPayload, pushServiceOk, pushTopic, vapidHeader, vapidKeys, WebPush } from '../src/webpush.js';
 
 const hkdf = (salt, ikm, info, len) => Buffer.from(crypto.hkdfSync('sha256', ikm, salt, info, len));
 
@@ -72,6 +72,29 @@ test('what a phone shows: one line, the downstream count it may see, and where a
   assert.equal(pushPayload(a, new Set([7, 8])).body, 'No reply · 1 downstream affected');
   assert.equal(pushPayload({ ...a, kind: 'up', facts: [], affected: [] }).body, 'long text');
   assert.ok(Buffer.byteLength(JSON.stringify(pushPayload({ ...a, title: 'x'.repeat(5000), facts: [{ key: 'reason', value: 'y'.repeat(5000) }] }))) < 3000);
+});
+
+test('the Topic is always 32 base64url characters, and a service that refuses it gets none', async () => {
+  // Apple answered `monitor-5` with BadWebPushTopic
+  for (const tag of ['monitor-5', 'monitor-12345', 'test-1763500000000', 'x']) {
+    assert.match(pushTopic(tag), /^[A-Za-z0-9_-]{32}$/);
+  }
+  assert.equal(pushTopic('monitor-5'), pushTopic('monitor-5'));
+  assert.notEqual(pushTopic('monitor-5'), pushTopic('monitor-6'));
+
+  const settings = new Map();
+  const store = { getSetting: (k) => settings.get(k), setSetting: (k, v) => settings.set(k, v) };
+  const sent = [];
+  const fetch = async (url, init) => {
+    sent.push(init.headers.Topic);
+    return init.headers.Topic
+      ? { ok: false, status: 400, text: async () => '{"reason":"BadWebPushTopic"}' }
+      : { ok: true, status: 201, text: async () => '' };
+  };
+  const wp = new WebPush({ store, viewFor: () => null, fetch });
+  const { keys } = fakeBrowserKeys();
+  await wp.sendTo({ endpoint: 'https://web.push.apple.com/x', origin: 'https://uk.example.com', ...keys }, pushPayload({ kind: 'down', title: 'Down', monitor: { id: 5 } }));
+  assert.deepEqual(sent, [pushTopic('monitor-5'), undefined]);
 });
 
 // ---- through the API ------------------------------------------------------------

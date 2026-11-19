@@ -1290,11 +1290,10 @@ export function createApi({ store, engine, icons, auth, oidc = new Oidc({ store 
   route('POST', '/api/webpush/devices/:id/test', async ({ who, params }) => {
     pushAccount(who);
     try {
-      await webPush.test(myDevice(who, params.id));
+      return { ok: true, tag: await webPush.test(myDevice(who, params.id)) };
     } catch (err) {
       throw new HttpError(502, err.message);
     }
-    return { ok: true };
   }, 'view');
 
   route('POST', '/api/users', async ({ body }) => {
