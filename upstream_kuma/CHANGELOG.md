@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.23.0
+
+- **Alert and resolved sounds.** Pushover, Home Assistant and ntfy channels can make an alert and its "back up" sound different.
+  - **Pushover**: an **Alert sound** and a **Resolved sound**, from Pushover's list or a sound you uploaded.
+  - **Home Assistant** (Companion app): sound file names for an iPhone, and **Critical alerts**, which make down alerts and severe problems sound at full volume even when the phone is muted or in a Focus. On Android, alerts and recoveries arrive on channels of their own (**Upstream Kuma alerts**, **Upstream Kuma resolved**), so each can have its own sound in Android's settings, and urgent alerts ring straight away.
+  - **ntfy**: a **priority for resolved alerts**, since ntfy picks the sound by priority on the phone. Recoveries are tagged ✅.
+  - Web push keeps the device's standard sound: websites can't choose one.
+
 ## 0.22.1
 
 - **Alerts reach iPhones.** Apple refused every alert pushed to an iPhone (`BadWebPushTopic`), though tests got through: the header that lets a monitor's "back up" replace an undelivered "down" wasn't in a shape Apple accepts. It now is, and a push service that still refuses it gets the push without one.

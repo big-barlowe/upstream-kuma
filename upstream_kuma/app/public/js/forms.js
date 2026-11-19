@@ -77,7 +77,10 @@ function field(f, value, onChange) {
       autocomplete: 'off',
       value: value ?? f.def ?? '',
       oninput: (e) => onChange(e.target.value),
+      // suggestions, and still free text (`suggest`: [{value, label}])
+      list: f.suggest ? `${id}-list` : null,
     });
+    if (f.suggest) input = [input, h('datalist', { id: `${id}-list` }, f.suggest.map((o) => h('option', { value: o.value, label: o.label })))];
   }
   return h('div', { class: 'field' },
     h('label', { for: id }, f.label),

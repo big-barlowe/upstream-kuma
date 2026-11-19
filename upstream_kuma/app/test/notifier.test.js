@@ -113,3 +113,52 @@ test('a refusal is not retried', async () => {
   const missing = await delivering([ok], { type: 'slack', cfg: {} });
   assert.deepEqual([missing.res.error, missing.calls], ['Missing "webhookUrl"', 0]);
 });
+
+const back = { ...alert, kind: 'up', title: 'Resolved: Host <2> is back up' };
+
+test('Pushover plays the alert sound or the resolved sound, and the default when unset', async () => {
+  const cfg = { userKey: 'u', appToken: 't', alertSound: 'siren', resolvedSound: 'magic' };
+  assert.equal((await sent('pushover', cfg, alert))[0].body.sound, 'siren');
+  assert.equal((await sent('pushover', cfg, back))[0].body.sound, 'magic');
+  assert.equal((await sent('pushover', { ...cfg, resolvedSound: ' ' }, back))[0].body.sound, undefined);
+});
+
+test('ntfy gives recoveries a priority of their own (the phone picks the sound by priority)', async () => {
+  const cfg = { server: 'https://ntfy.example', topic: 'net' };
+  let [c] = await sent('ntfy', cfg, alert);
+  assert.deepEqual([c.body.priority, c.body.tags], [5, ['rotating_light']]);
+  [c] = await sent('ntfy', cfg, back);
+  assert.deepEqual([c.body.priority, c.body.tags], [3, ['white_check_mark']]);
+  [c] = await sent('ntfy', { ...cfg, resolvedPriority: '2', priority: '9' }, back);
+  assert.equal(c.body.priority, 2);
+  [c] = await sent('ntfy', { ...cfg, priority: '9' }, alert);
+  assert.equal(c.body.priority, 5);
+});
+
+test('Home Assistant: sounds and channels for the Companion app, critical down alerts', async () => {
+  const { config } = await import('../src/config.js');
+  const saved = { haUrl: config.haUrl, haToken: config.haToken };
+  Object.assign(config, { haUrl: 'http://ha.test', haToken: 'x' });
+  try {
+    const phone = { service: 'notify.mobile_app_iphone', alertSound: 'Alarm.caf', resolvedSound: 'Tink.caf' };
+    let [c] = await sent('homeassistant', phone, alert);
+    assert.equal(c.url, 'http://ha.test/api/services/notify/mobile_app_iphone');
+    assert.deepEqual(c.body.data, { channel: 'Upstream Kuma alerts', ttl: 0, priority: 'high', push: { sound: 'Alarm.caf' } });
+    [c] = await sent('homeassistant', phone, back);
+    assert.deepEqual(c.body.data, { channel: 'Upstream Kuma resolved', push: { sound: 'Tink.caf' } });
+    [c] = await sent('homeassistant', { ...phone, critical: true }, alert);
+    assert.deepEqual(c.body.data, { channel: 'alarm_stream', ttl: 0, priority: 'high', push: { sound: { name: 'Alarm.caf', critical: 1, volume: 1 } } });
+    // recoveries are never critical
+    [c] = await sent('homeassistant', { ...phone, critical: true }, back);
+    assert.equal(c.body.data.push.sound, 'Tink.caf');
+    // a phone without sounds still gets its channel; other services get no data
+    [c] = await sent('homeassistant', { service: 'notify.mobile_app_pixel' }, back);
+    assert.deepEqual(c.body.data, { channel: 'Upstream Kuma resolved' });
+    [c] = await sent('homeassistant', { service: 'notify.telegram' }, alert);
+    assert.equal(c.body.data, undefined);
+    [c] = await sent('homeassistant', { service: 'persistent_notification.create', critical: true }, alert);
+    assert.equal(c.body.data, undefined);
+  } finally {
+    Object.assign(config, saved);
+  }
+});

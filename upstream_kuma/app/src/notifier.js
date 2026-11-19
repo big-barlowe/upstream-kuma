@@ -20,6 +20,47 @@ export function level(a) {
   return 'calm';
 }
 
+// "Back up" and "resolved" alerts, which can sound different from the rest.
+export const isRecovery = (a) => a.kind === 'up' || a.kind === 'resolved';
+// The channel's sound for this alert ('' = the app's default).
+const soundFor = (cfg, a) => String((isRecovery(a) ? cfg.resolvedSound : cfg.alertSound) ?? '').trim();
+
+// Pushover's built-in sounds (an account's uploaded ones work by name too).
+const PUSHOVER_SOUNDS = [
+  ['pushover', 'Pushover (default)'], ['bike', 'Bike'], ['bugle', 'Bugle'], ['cashregister', 'Cash Register'],
+  ['classical', 'Classical'], ['cosmic', 'Cosmic'], ['falling', 'Falling'], ['gamelan', 'Gamelan'],
+  ['incoming', 'Incoming'], ['intermission', 'Intermission'], ['magic', 'Magic'], ['mechanical', 'Mechanical'],
+  ['pianobar', 'Piano Bar'], ['siren', 'Siren'], ['spacealarm', 'Space Alarm'], ['tugboat', 'Tug Boat'],
+  ['alien', 'Alien Alarm (long)'], ['climb', 'Climb (long)'], ['persistent', 'Persistent (long)'],
+  ['echo', 'Pushover Echo (long)'], ['updown', 'Up Down (long)'], ['vibrate', 'Vibrate only'], ['none', 'None (silent)'],
+].map(([value, label]) => ({ value, label }));
+const pushoverSound = (key, label, help) => ({ key, label, suggest: PUSHOVER_SOUNDS, help });
+
+// Home Assistant Companion app: on Android a notification's sound is its
+// channel's, set in Android's settings, so alerts and recoveries go to
+// channels of their own.
+export const HA_CHANNELS = { alert: 'Upstream Kuma alerts', resolved: 'Upstream Kuma resolved' };
+const HA_IOS_SOUNDS = ['default', 'none'].map((value) => ({ value, label: value === 'none' ? 'None (silent)' : 'The default tone' }));
+const haSound = (key, label, help) => ({ key, label, placeholder: 'default', suggest: HA_IOS_SOUNDS, help });
+
+// The `data` for a Companion app notification. Only for notify services, and
+// only when it's a phone (mobile_app_…) or a sound option is set: other
+// notify services may refuse keys they don't know.
+export function haPushData(cfg, a, service) {
+  const sound = soundFor(cfg, a);
+  const critical = Boolean(cfg.critical) && level(a) === 'urgent';
+  if (!service.startsWith('mobile_app_') && !cfg.alertSound && !cfg.resolvedSound && !cfg.critical) return null;
+  const data = { channel: HA_CHANNELS[isRecovery(a) ? 'resolved' : 'alert'] };
+  if (level(a) === 'urgent') Object.assign(data, { ttl: 0, priority: 'high' }); // ring now, not when the phone next syncs
+  if (critical) {
+    data.channel = 'alarm_stream'; // Android: the alarm volume, through Do Not Disturb
+    data.push = { sound: { name: sound || 'default', critical: 1, volume: 1.0 } };
+  } else if (sound) {
+    data.push = { sound };
+  }
+  return data;
+}
+
 const POST_TIMEOUT = 20000;
 
 // The Web push sender (a WebPush from webpush.js), set by createApi(): it
@@ -213,14 +254,19 @@ export const providers = {
     label: 'Home Assistant',
     fields: [
       { key: 'service', label: 'Service', placeholder: 'notify.mobile_app_my_phone', help: 'Any notify.* service, or persistent_notification.create' },
+      haSound('alertSound', 'Alert sound (iPhone, optional)', 'The full file name of a sound in the Companion app: an iOS sound such as Tink.caf (import the system sounds first, in the app’s notification sound settings), one of its own .wav sounds, or one you added. Blank = the default tone.'),
+      haSound('resolvedSound', 'Resolved sound (iPhone, optional)', 'For “back up” and resolved alerts. Blank = the default tone.'),
+      { key: 'critical', label: 'Critical alerts: down alerts (and severe problems) sound at full volume even when the phone is muted or in a Focus', type: 'checkbox' },
     ],
+    help: `Sounds work with the Home Assistant Companion app (notify.mobile_app_…). On an iPhone, name them below. On Android, a notification’s sound is its channel’s: alerts arrive on the channel “${HA_CHANNELS.alert}” and recoveries on “${HA_CHANNELS.resolved}”. Once one of each has arrived, set their sounds in Android’s notification settings for the Companion app.`,
     async send(cfg, a) {
       required(cfg, 'service');
       const [domain, service] = cfg.service.replace(/^\//, '').split('.');
       if (!domain || !service) throw permanent('Service must look like domain.service');
+      const data = domain === 'notify' ? haPushData(cfg, a, service) : null;
       const body = domain === 'persistent_notification'
         ? { title: a.title, message: a.message, notification_id: `upstream_kuma_${a.monitor?.id ?? 'test'}` }
-        : { title: a.title, message: a.message };
+        : { title: a.title, message: a.message, ...(data ? { data } : {}) };
       await haRequest(`/api/services/${domain}/${service}`, { method: 'POST', body });
     },
   },
@@ -232,16 +278,19 @@ export const providers = {
       { key: 'topic', label: 'Topic' },
       { key: 'token', label: 'Access token (optional)', secret: true },
       { key: 'priority', label: 'Priority for down alerts (1-5)', placeholder: '5' },
+      { key: 'resolvedPriority', label: 'Priority for resolved alerts (1-5)', placeholder: '3', help: 'A priority of its own gives recoveries a sound of their own (see above). 1 and 2 are silent.' },
     ],
+    help: 'ntfy messages can’t carry a sound: the phone plays the one set for the message’s priority. In the ntfy Android app, set a sound per priority (Settings → Channel settings), or per topic (the topic’s ⋮ → Subscription settings → Custom notification settings). Down alerts use the priority below, warnings 4, other alerts 3.',
     async send(cfg, a) {
       required(cfg, 'topic');
       const server = (cfg.server || 'https://ntfy.sh').replace(/\/$/, '');
+      const priority = (v, def) => Math.min(5, Math.max(1, Math.round(Number(v)) || def));
       await post(server, {
         topic: cfg.topic,
         title: a.title,
         message: a.message,
-        priority: { urgent: Number(cfg.priority || 5), warning: 4, calm: 3 }[level(a)],
-        tags: [{ urgent: 'rotating_light', warning: 'warning', calm: 'droplet' }[level(a)]],
+        priority: isRecovery(a) ? priority(cfg.resolvedPriority, 3) : { urgent: priority(cfg.priority, 5), warning: 4, calm: 3 }[level(a)],
+        tags: [isRecovery(a) ? 'white_check_mark' : { urgent: 'rotating_light', warning: 'warning', calm: 'droplet' }[level(a)]],
       }, cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {});
     },
   },
@@ -301,15 +350,19 @@ export const providers = {
     fields: [
       { key: 'userKey', label: 'User key', secret: true },
       { key: 'appToken', label: 'Application token', secret: true },
+      pushoverSound('alertSound', 'Alert sound (optional)', 'One of Pushover’s sounds, or the name of one you uploaded at pushover.net. Blank = your default tone in the Pushover app.'),
+      pushoverSound('resolvedSound', 'Resolved sound (optional)', 'For “back up” and resolved alerts. Blank = your default tone.'),
     ],
     async send(cfg, a) {
       required(cfg, 'userKey', 'appToken');
+      const sound = soundFor(cfg, a);
       await post('https://api.pushover.net/1/messages.json', {
         token: cfg.appToken,
         user: cfg.userKey,
         title: a.title,
         message: a.message,
         priority: level(a) === 'urgent' ? 1 : 0,
+        ...(sound ? { sound } : {}),
       });
     },
   },
